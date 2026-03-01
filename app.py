@@ -43,15 +43,46 @@ def get_data_dir():
     # 优先使用环境变量指定的目录（用于 Railway Volume）
     data_dir = os.environ.get('DATA_DIR')
     if data_dir:
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir)
-        return data_dir
+        try:
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir, exist_ok=True)
+            # 测试是否可写
+            test_file = os.path.join(data_dir, '.test')
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logging.info(f"Using DATA_DIR: {data_dir}")
+            return data_dir
+        except Exception as e:
+            logging.error(f"DATA_DIR not writable: {e}")
+    
+    # 尝试在 /data 目录（Railway Volume 默认位置）
+    try:
+        if os.path.exists('/data'):
+            test_file = '/data/.test'
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logging.info("Using /data directory")
+            return '/data'
+    except:
+        pass
     
     # 其次使用项目目录下的 data 文件夹
-    data_dir = os.path.join(get_base_path(), 'data')
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
-    return data_dir
+    try:
+        data_dir = os.path.join(get_base_path(), 'data')
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir, exist_ok=True)
+        logging.info(f"Using local data dir: {data_dir}")
+        return data_dir
+    except Exception as e:
+        logging.error(f"Local data dir failed: {e}")
+    
+    # 最后使用 /tmp 目录
+    tmp_dir = '/tmp/ai_reader_data'
+    os.makedirs(tmp_dir, exist_ok=True)
+    logging.info(f"Using tmp dir: {tmp_dir}")
+    return tmp_dir
 
 app = Flask(__name__, template_folder=get_resource_path('templates'))
 
@@ -574,16 +605,21 @@ def ask_ai():
     user_id = get_current_user_id()
     d = request.json
     text, mode, bid, wid = d.get('text'), d.get('mode'), d.get('book_id'), d.get('word_index')
+    
+    if not text:
+        return jsonify({'result': '请输入要查询的内容'})
+    
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
     
+    # 先查找已有的解释
     if mode == 'word':
         if wid:
             c.execute("SELECT explanation FROM notebook WHERE user_id=? AND book_id=? AND word_index=?", (user_id, bid, wid))
         else:
             c.execute("SELECT explanation FROM notebook WHERE user_id=? AND text=? ORDER BY created_at DESC LIMIT 1", (user_id, text))
         row = c.fetchone()
-        if row:
+        if row and row[0]:
             conn.close()
             return jsonify({'result': row[0]})
 
@@ -596,45 +632,45 @@ def ask_ai():
         try:
             if HAS_TRANSLATOR:
                 cn = GoogleTranslator(source='auto', target='zh-CN').translate(text)
+                if not cn:
+                    cn = text  # 如果翻译返回空，使用原词
             else:
-                cn = "[翻译服务不可用]"
+                cn = text
         except Exception as e:
             logging.error(f"翻译失败: {e}")
-            cn = "[翻译失败]"
+            cn = text
         
         # 尝试获取英文定义
         try:
-            if lemmatizer:
-                syns = wordnet.synsets(text)
-                if syns:
-                    en = syns[0].definition().capitalize() + "."
-                else:
-                    en = "No definition found."
+            syns = wordnet.synsets(text)
+            if syns:
+                en = syns[0].definition().capitalize() + "."
             else:
-                en = "Dictionary not available."
+                en = "No definition available."
         except Exception as e:
             logging.error(f"词典查询失败: {e}")
-            en = "Definition lookup failed."
+            en = "Definition not found."
         
         # 包装英文定义中的单词
         def wrap(m):
             return f'<span class="word nested-word">{m.group(0)}</span>'
-        en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
+        if en:
+            en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
         
-        # 如果翻译和定义都失败，使用 DeepSeek
-        if cn in ["[翻译失败]", "[翻译服务不可用]"] and en in ["Definition lookup failed.", "Dictionary not available."]:
-            res = call_deepseek(f"Please explain the English word '{text}' with Chinese translation and English definition in HTML format", 200)
-        else:
-            res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
+        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
     else:
         res = call_deepseek(f"Translate and Analyze: {text}", 500)
+        if not res:
+            res = "无法获取解释"
 
+    # 保存到生词本
     try:
         c.execute("INSERT INTO notebook (user_id, text, explanation, type, book_id, word_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                   (user_id, text, res, mode, bid, wid, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         conn.commit()
-    except:
-        pass
+    except Exception as e:
+        logging.error(f"保存生词失败: {e}")
+    
     conn.close()
     return jsonify({'result': res})
 
@@ -881,10 +917,17 @@ def vocab_det():
 def health():
     return jsonify({'status': 'ok', 'time': datetime.now().isoformat()})
 
+@app.route('/_health')
+def health_check():
+    """Railway 健康检查端点"""
+    return 'OK', 200
+
 # ============================================
 # 🚀 启动
 # ============================================
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Starting server on port {port}")
+    print(f"📁 Data directory: {get_data_dir()}")
     app.run(host='0.0.0.0', port=port, debug=False)

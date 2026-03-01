@@ -1266,7 +1266,7 @@
                 tooltip.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
                 tooltip.style.top = (rect.top - 40) + 'px';
                 tooltip.style.display = 'block';
-                tooltip.innerHTML = "🚀...";
+                tooltip.innerHTML = "🚀 查询中...";
 
                 try {
                     const res = await fetch('/ask_ai', {
@@ -1274,12 +1274,21 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ text: word, mode: 'word', book_id: bookId, word_index: wordIndex })
                     });
+
+                    if (!res.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+
                     const data = await res.json();
-                    tooltip.innerHTML = data.result;
-                    outputDiv.innerHTML = `<h3>${word}</h3><div>${data.result}</div>`;
+                    const result = data.result || data.error || '暂无释义';
+
+                    tooltip.innerHTML = result;
+                    outputDiv.innerHTML = `<h3>${word}</h3><div>${result}</div>`;
                     updateSidebarStats();
                 } catch (err) {
-                    tooltip.innerHTML = "❌";
+                    console.error('Word lookup error:', err);
+                    tooltip.innerHTML = "❌ 查询失败";
+                    outputDiv.innerHTML = `<h3>${word}</h3><div>查询失败，请重试</div>`;
                     wordEl.classList.remove('active-word');
                 }
             }
