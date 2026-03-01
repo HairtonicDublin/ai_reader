@@ -582,22 +582,43 @@ def ask_ai():
 
     res = ""
     if mode == 'word':
+        cn = ""
+        en = ""
+        
+        # 尝试翻译
         try:
-            cn = GoogleTranslator(source='auto', target='zh-CN').translate(text) if HAS_TRANSLATOR else "[无翻译库]"
-            en = "No definition."
-            try:
+            if HAS_TRANSLATOR:
+                cn = GoogleTranslator(source='auto', target='zh-CN').translate(text)
+            else:
+                cn = "[翻译服务不可用]"
+        except Exception as e:
+            logging.error(f"翻译失败: {e}")
+            cn = "[翻译失败]"
+        
+        # 尝试获取英文定义
+        try:
+            if lemmatizer:
                 syns = wordnet.synsets(text)
                 if syns:
                     en = syns[0].definition().capitalize() + "."
-            except:
-                pass
-            
-            def wrap(m):
-                return f'<span class="word nested-word">{m.group(0)}</span>'
-            en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
+                else:
+                    en = "No definition found."
+            else:
+                en = "Dictionary not available."
+        except Exception as e:
+            logging.error(f"词典查询失败: {e}")
+            en = "Definition lookup failed."
+        
+        # 包装英文定义中的单词
+        def wrap(m):
+            return f'<span class="word nested-word">{m.group(0)}</span>'
+        en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
+        
+        # 如果翻译和定义都失败，使用 DeepSeek
+        if cn in ["[翻译失败]", "[翻译服务不可用]"] and en in ["Definition lookup failed.", "Dictionary not available."]:
+            res = call_deepseek(f"Please explain the English word '{text}' with Chinese translation and English definition in HTML format", 200)
+        else:
             res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
-        except:
-            res = call_deepseek(f"Explain {text} in HTML", 200)
     else:
         res = call_deepseek(f"Translate and Analyze: {text}", 500)
 
