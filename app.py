@@ -40,7 +40,14 @@ def get_resource_path(relative_path):
     return os.path.join(get_base_path(), relative_path)
 
 def get_data_dir():
-    # 云端使用项目目录下的 data 文件夹
+    # 优先使用环境变量指定的目录（用于 Railway Volume）
+    data_dir = os.environ.get('DATA_DIR')
+    if data_dir:
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+        return data_dir
+    
+    # 其次使用项目目录下的 data 文件夹
     data_dir = os.path.join(get_base_path(), 'data')
     if not os.path.exists(data_dir):
         os.makedirs(data_dir)
