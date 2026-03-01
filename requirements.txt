@@ -1,0 +1,13 @@
+# Web 框架
+flask==3.0.0
+gunicorn==21.2.0
+
+# PDF/EPUB 解析
+pymupdf==1.23.8
+
+# 翻译和词典
+deep-translator==1.11.4
+nltk==3.8.1
+
+# HTTP 请求
+requests==2.31.0
