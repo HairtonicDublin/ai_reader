@@ -1,0 +1,1592 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>AI Reader</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <style>
+        body {
+            display: flex;
+            height: 100vh;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #f5f5f7;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* 用户信息栏 */
+        .user-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            z-index: 10000;
+            font-size: 13px;
+        }
+
+        .user-bar .user-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .user-bar .avatar {
+            width: 24px;
+            height: 24px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+
+        .user-bar .logout-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 5px 12px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background 0.2s;
+        }
+
+        .user-bar .logout-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .main-container {
+            display: flex;
+            width: 100%;
+            margin-top: 40px;
+            height: calc(100vh - 40px);
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
+        #reader-container {
+            flex: 2;
+            padding: 40px;
+            overflow-y: auto;
+            background: white;
+            margin: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        #content,
+        #content * {
+            user-select: text !important;
+            -webkit-user-select: text !important;
+            cursor: text;
+        }
+
+        #content {
+            line-height: 2.0;
+            font-size: 19px;
+            color: #2c3e50;
+            white-space: pre-wrap;
+            text-align: justify;
+            padding-bottom: 100px;
+            font-family: "Georgia", serif;
+        }
+
+        .word {
+            border-radius: 3px;
+            transition: all 0.1s;
+            cursor: pointer !important;
+            border-bottom: 1px solid transparent;
+            -webkit-tap-highlight-color: rgba(25, 118, 210, 0.3);
+        }
+
+        .word:hover {
+            background: #f0f0f0;
+            border-bottom: 1px dashed #ccc;
+        }
+
+        .active-word {
+            background-color: #e3f2fd !important;
+            color: #1976d2 !important;
+            border-bottom: 2px solid #1976d2 !important;
+            font-weight: bold;
+        }
+
+        .nested-word {
+            border-bottom: 1px dotted #999;
+        }
+
+        .nested-word:hover {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        #sidebar {
+            flex: 1;
+            background: #fff;
+            margin: 20px 20px 20px 0;
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            min-width: 280px;
+        }
+
+        .sidebar-section {
+            background: #f9fafb;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #eee;
+        }
+
+        .section-title {
+            font-size: 12px;
+            font-weight: bold;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .btn-notebook {
+            display: block;
+            width: 100%;
+            text-align: center;
+            background: #fff;
+            border: 1px solid #ddd;
+            color: #333;
+            padding: 10px 0;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+
+        .btn-notebook:hover {
+            background: #f0f0f0;
+            border-color: #ccc;
+        }
+
+        .stats-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .stat-item:hover {
+            transform: translateY(-2px);
+            border-color: #007bff;
+        }
+
+        .stat-num {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2c3e50;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 10px;
+            color: #888;
+            text-transform: uppercase;
+            margin-top: 2px;
+        }
+
+        .stat-item.new .stat-num {
+            color: #e67e22;
+        }
+
+        .stat-item.cumulative .stat-num {
+            color: #2980b9;
+        }
+
+        .stat-item.user-vocab {
+            background: #e8f5e9;
+            border-color: #a5d6a7;
+        }
+
+        .stat-item.user-vocab .stat-num {
+            color: #27ae60;
+        }
+
+        .stat-item.word-count .stat-num {
+            color: #8e44ad;
+        }
+
+        .btn-master {
+            width: 100%;
+            padding: 10px;
+            margin-top: 8px;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-reset-book {
+            width: 100%;
+            padding: 8px;
+            margin-top: 8px;
+            background: #fff;
+            color: #e74c3c;
+            border: 1px solid #e74c3c;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            opacity: 0.8;
+        }
+
+        .review-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .btn-review {
+            flex: 1;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-review:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-flashcard {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        #output {
+            flex-grow: 1;
+            overflow-y: auto;
+            color: #666;
+            line-height: 1.6;
+            font-size: 15px;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 20000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #888;
+        }
+
+        .upload-wrapper {
+            position: relative;
+            width: 100%;
+            height: 100px;
+            cursor: pointer;
+            will-change: transform;
+        }
+
+        #file-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            z-index: 99;
+            cursor: pointer;
+        }
+
+        .upload-visual {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #fff;
+            color: #666;
+            font-size: 13px;
+            box-sizing: border-box;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .upload-visual.dragover {
+            border-color: #007bff;
+            background: #e8f4ff;
+            color: #007bff;
+        }
+
+        #vocab-modal .modal-content {
+            background: white;
+            width: 600px;
+            max-width: 95%;
+            height: 80vh;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #vocab-modal .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-content: flex-start;
+            flex: 1;
+        }
+
+        .vocab-item {
+            font-size: 14px;
+            color: #333;
+            background: #f8f9fa;
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid #eee;
+            cursor: grab;
+            transition: all 0.1s;
+            user-select: none;
+        }
+
+        .vocab-item:hover {
+            background: #e3f2fd;
+            color: #1976d2;
+            border-color: #1976d2;
+            transform: scale(1.05);
+        }
+
+        .vocab-item.active-modal-word {
+            background: #1976d2;
+            color: white;
+            border-color: #1976d2;
+        }
+
+        #trash-zone {
+            height: 60px;
+            background: #fff0f0;
+            border-top: 1px solid #ffcccc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #d63031;
+            font-weight: bold;
+            font-size: 14px;
+            transition: all 0.2s;
+            will-change: background-color;
+        }
+
+        #trash-zone.dragover {
+            background: #d63031;
+            color: white;
+            transform: scale(1.02);
+        }
+
+        #notebook-modal .modal-content {
+            background: #f5f5f7;
+            width: 95%;
+            height: 95vh;
+            border-radius: 12px;
+            display: flex;
+            overflow: hidden;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+        }
+
+        #nb-sidebar {
+            width: 320px;
+            background: #2c3e50;
+            color: #ecf0f1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #ddd;
+            overflow-y: auto;
+            flex-shrink: 0;
+        }
+
+        .nb-sidebar-header {
+            padding: 15px;
+            background: #1a252f;
+            border-bottom: 1px solid #34495e;
+            flex-shrink: 0;
+        }
+
+        #nb-book-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding-bottom: 20px;
+        }
+
+        .nb-folder {
+            background: #34495e;
+            border-bottom: 1px solid #465c71;
+        }
+
+        .nb-folder-header {
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            font-weight: bold;
+            color: #f1f2f6;
+            font-size: 13px;
+        }
+
+        .nb-folder-content {
+            padding-left: 10px;
+            background: #253342;
+            display: block;
+        }
+
+        .nb-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            border-bottom: 1px solid #34495e;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .nb-item-content {
+            flex-grow: 1;
+            min-width: 0;
+        }
+
+        .nb-item:hover {
+            background: #34495e;
+        }
+
+        .nb-item.active {
+            background: #007bff;
+            border-left: 4px solid #fff;
+        }
+
+        .nb-title {
+            font-weight: bold;
+            font-size: 14px;
+            white-space: normal;
+            line-height: 1.3;
+            word-wrap: break-word;
+        }
+
+        .nb-delete-btn {
+            background: none;
+            border: none;
+            color: #ff6b6b;
+            font-size: 14px;
+            cursor: pointer;
+            padding: 5px;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            flex-shrink: 0;
+        }
+
+        .nb-item:hover .nb-delete-btn {
+            opacity: 1;
+        }
+
+        #nb-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            min-width: 0;
+        }
+
+        #nb-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        #nb-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+            margin: 0;
+        }
+
+        .nb-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .nb-table th,
+        .nb-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .nb-table th {
+            background: #f8f9fa;
+            color: #555;
+            font-size: 13px;
+            text-transform: uppercase;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+        }
+
+        .type-tag {
+            font-size: 12px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        .type-word {
+            background: #e3f2fd;
+            color: #1565c0;
+        }
+
+        .type-sentence {
+            background: #fff3e0;
+            color: #e65100;
+        }
+
+        .btn-clear {
+            background-color: #ff4d4d;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .btn-del-word {
+            border: none;
+            background: none;
+            cursor: pointer;
+            font-size: 16px;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+        }
+
+        .btn-del-word:hover {
+            opacity: 1;
+        }
+
+        .btn-add-folder {
+            background: none;
+            border: 1px dashed #7f8c8d;
+            color: #bdc3c7;
+            width: 100%;
+            padding: 8px;
+            margin-top: 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        /* Chart */
+        #chart-wrapper {
+            padding: 15px 20px;
+            border-bottom: 1px solid #eee;
+            background: #fff;
+        }
+
+        .chart-header {
+            font-size: 14px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        #chart-container {
+            display: flex;
+            align-items: flex-end;
+            gap: 12px;
+            height: 125px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+        }
+
+        .chart-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 20px;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .chart-count {
+            font-size: 10px;
+            color: #27ae60;
+            font-weight: bold;
+            margin-bottom: 2px;
+            height: 12px;
+            opacity: 1;
+            text-align: center;
+        }
+
+        .chart-blocks {
+            display: flex;
+            flex-direction: column-reverse;
+            gap: 2px;
+        }
+
+        .chart-unit {
+            width: 14px;
+            height: 12px;
+            border-radius: 2px;
+            background-color: #ebedf0;
+            transition: all 0.1s;
+        }
+
+        .chart-unit.active {
+            background-color: #40c463;
+        }
+
+        .chart-date {
+            font-size: 10px;
+            color: #999;
+            margin-top: 6px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        /* Cards */
+        .card-modal .modal-content {
+            background: white;
+            width: 500px;
+            max-width: 95%;
+            height: 600px;
+            max-height: 90vh;
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            text-align: center;
+        }
+
+        .card-modal .card-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        .card-modal .card-actions {
+            height: 80px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        /* 🟢 考核模式专属样式：只显英文，且放大 */
+        #quiz-def {
+            text-align: left;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+
+        #quiz-def .cn-def {
+            display: none !important;
+        }
+
+        #quiz-def .en-def {
+            display: block !important;
+            font-size: 22px !important;
+            font-weight: 500;
+            color: #2c3e50 !important;
+            margin-top: 0 !important;
+            font-family: "Georgia", serif;
+            line-height: 1.5;
+        }
+
+        #quiz-input {
+            width: 80%;
+            padding: 15px;
+            font-size: 20px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            outline: none;
+            text-align: center;
+            font-family: "Georgia", serif;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+
+        #quiz-input:focus {
+            border-color: #667eea;
+        }
+
+        #quiz-input.correct {
+            border-color: #27ae60;
+            background: #e8f5e9;
+        }
+
+        #quiz-input.wrong {
+            border-color: #e74c3c;
+            background: #ffebee;
+        }
+
+        #quiz-feedback {
+            margin-top: 15px;
+            height: 30px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .btn-submit {
+            width: 100%;
+            height: 100%;
+            background: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        #review-front {
+            font-size: 36px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 20px;
+            font-family: "Georgia", serif;
+        }
+
+        #review-back {
+            display: none;
+            font-size: 16px;
+            color: #555;
+            line-height: 1.6;
+            text-align: left;
+            width: 100%;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+            overflow-y: auto;
+            max-height: 300px;
+        }
+
+        .btn-rate {
+            flex: 1;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.1s;
+            color: white;
+        }
+
+        .rate-again {
+            background: #ff7675;
+        }
+
+        .rate-good {
+            background: #74b9ff;
+        }
+
+        .rate-easy {
+            background: #55efc4;
+            color: #2d3436;
+        }
+
+        #btn-show-answer {
+            width: 100%;
+            height: 100%;
+            background: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        #sentence-btn {
+            position: fixed;
+            display: none;
+            z-index: 2147483647;
+            background: #1976d2;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 30px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(25, 118, 210, 0.4);
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        #word-tooltip {
+            position: fixed;
+            display: none;
+            z-index: 2147483647;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            pointer-events: none;
+            max-width: 300px;
+        }
+
+        /* iPad 上传按钮 */
+        #mobile-upload-btn {
+            display: none;
+            width: 100%;
+            padding: 12px;
+            margin-top: 10px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* iPad/触摸设备适配 */
+        @media (pointer: coarse) {
+            #mobile-upload-btn {
+                display: block !important;
+            }
+
+            .upload-wrapper {
+                height: 80px;
+            }
+
+            #file-input {
+                width: 100%;
+                height: 100%;
+                opacity: 0;
+                position: absolute;
+                top: 0;
+                left: 0;
+                z-index: 100;
+                cursor: pointer;
+                -webkit-tap-highlight-color: transparent;
+            }
+
+            .upload-visual {
+                pointer-events: none;
+            }
+
+            .nb-delete-btn {
+                opacity: 1;
+            }
+
+            .btn-del-word {
+                opacity: 1;
+            }
+        }
+
+        /* iPad 横屏布局优化 */
+        @media (max-width: 1024px) {
+            body {
+                flex-direction: column;
+            }
+
+            #reader-container {
+                flex: 1;
+                margin: 10px;
+                padding: 20px;
+            }
+
+            #sidebar {
+                flex: none;
+                margin: 0 10px 10px 10px;
+                max-height: 40vh;
+                overflow-y: auto;
+            }
+
+            #notebook-modal .modal-content {
+                flex-direction: column;
+            }
+
+            #nb-sidebar {
+                width: 100%;
+                max-height: 30vh;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- 用户信息栏 -->
+    <div class="user-bar">
+        <div class="user-info">
+            <div class="avatar">👤</div>
+            <span>{{ username if username else '游客' }}</span>
+        </div>
+        <a href="/logout" class="logout-btn">退出登录</a>
+    </div>
+
+    <div class="main-container">
+        <input type="hidden" id="current-book-id" value="{{ book_id }}">
+
+        <div id="vocab-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div
+                    style="padding: 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">
+                    <h3 style="margin:0" id="modal-title">词表</h3>
+                    <button class="close-btn" onclick="closeModal('vocab-modal')">×</button>
+                </div>
+                <div class="modal-body" id="modal-list">
+                    <p>加载中...</p>
+                </div>
+                <div id="trash-zone">🗑️ 把识别错误的词拖到这里删除</div>
+            </div>
+        </div>
+
+        <div id="notebook-modal" class="modal-overlay">
+            <div class="modal-content">
+                <div id="nb-sidebar">
+                    <div class="nb-sidebar-header">
+                        <div style="font-weight:bold; margin-bottom:10px;">📚 我的书架</div>
+                        <button class="btn-add-folder" onclick="createFolder()">+ 新建文件夹</button>
+                    </div>
+                    <div id="nb-item-container" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+                        <div class="nb-item" onclick="openNotebookModal('0')" ondragover="allowDrop(event)"
+                            ondrop="dropBook(event, 0)"
+                            style="background: #253342; border-bottom: 2px solid #34495e; flex-shrink:0;">
+                            <div class="nb-item-content">
+                                <div class="nb-title">🕒 最近记录 / 全部</div>
+                            </div>
+                        </div>
+                        <div id="nb-book-list"></div>
+                    </div>
+                </div>
+                <div id="nb-main">
+                    <div id="nb-header">
+                        <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+                            <h3 style="margin:0; color:#2c3e50;" id="nb-current-title">生词列表</h3>
+                            <div>
+                                <button class="btn-clear" onclick="clearNotebook()">🗑️ 清空列表</button>
+                                <button class="close-btn" style="margin-left:15px;"
+                                    onclick="closeModal('notebook-modal')">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="chart-wrapper">
+                        <div class="chart-header"><span>🔥 过去30天活跃度</span></div>
+                        <div id="chart-container"></div>
+                    </div>
+                    <div id="nb-list">
+                        <table class="nb-table">
+                            <thead>
+                                <tr>
+                                    <th width="20%">原文</th>
+                                    <th width="50%">AI 解释</th>
+                                    <th width="10%">类型</th>
+                                    <th width="10%">时间</th>
+                                    <th width="10%">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="nb-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="quiz-modal" class="modal-overlay card-modal">
+            <div class="modal-content">
+                <div style="padding:15px; border-bottom:1px solid #eee; text-align:right;">
+                    <button class="close-btn" onclick="closeModal('quiz-modal')">×</button>
+                </div>
+                <div class="card-body">
+                    <div id="quiz-def">Loading...</div>
+                    <input type="text" id="quiz-input" placeholder="输入单词..." autocomplete="off">
+                    <div id="quiz-feedback"></div>
+                </div>
+                <div class="card-actions"><button class="btn-submit" onclick="submitQuiz()">⚡️ 提交答案</button></div>
+            </div>
+        </div>
+
+        <div id="review-modal" class="modal-overlay card-modal">
+            <div class="modal-content">
+                <div style="padding:15px; border-bottom:1px solid #eee; text-align:right;">
+                    <button class="close-btn" onclick="closeModal('review-modal')">×</button>
+                </div>
+                <div class="card-body">
+                    <div id="review-front">Word</div>
+                    <div id="review-back">Definition</div>
+                </div>
+                <div class="card-actions">
+                    <button id="btn-show-answer" onclick="showReviewAnswer()">查看答案</button>
+                    <div id="review-grading" style="display:none; width:100%; gap:10px; display:flex;">
+                        <button class="btn-rate rate-again" onclick="rateCard(1)">忘记 (1m)</button>
+                        <button class="btn-rate rate-good" onclick="rateCard(3)">记得 (15m)</button>
+                        <button class="btn-rate rate-easy" onclick="rateCard(5)">简单 (1h)</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="word-tooltip"></div>
+        <button id="sentence-btn">✨ Explain Sentence</button>
+
+        <div id="reader-container">
+            <div id="content">
+                {% if content %}
+                <div
+                    style="color:#aaa; font-size:14px; margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                    当前阅读: <b>{{ book_title }}</b>
+                </div>
+                <div id="raw" style="display:none">{{ content }}</div>
+                <div id="formatted"></div>
+                {% else %}
+                <div
+                    style="display:flex; height:100%; align-items:center; justify-content:center; color:#ccc; flex-direction:column;">
+                    <h2>请导入书籍</h2>
+                    <p>点击或拖拽 PDF / EPUB</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div id="sidebar">
+            <div class="sidebar-section">
+                <div class="section-title">Statistics (词汇统计)</div>
+                <div class="stats-box">
+                    <div class="stat-item new" onclick="showVocab('new')">
+                        <span class="stat-num" id="stat-new">+{{ stats['new'] }}</span>
+                        <span class="stat-label">本书新词</span>
+                    </div>
+                    <div class="stat-item cumulative" onclick="showVocab('cumulative')">
+                        <span class="stat-num" id="stat-cumulative">{{ stats['cumulative'] }}</span>
+                        <span class="stat-label">累计总单词</span>
+                    </div>
+                    <div class="stat-item word-count">
+                        <span class="stat-num" id="stat-word-count">{{ stats['word_count'] }}</span>
+                        <span class="stat-label">全书总字数</span>
+                    </div>
+                    <div class="stat-item user-vocab" onclick="showVocab('cumulative')">
+                        <span class="stat-num" id="stat-user-vocab">{{ stats['user_vocab'] }}</span>
+                        <span class="stat-label">当前掌握词汇量</span>
+                    </div>
+                </div>
+                {% if content %}
+                <button class="btn-master" id="btn-master" onclick="resetForExam()">✅ 已掌握全部单词</button>
+                <button class="btn-reset-book" onclick="resetBook()">⚠️ 重置本书 (清空数据)</button>
+                {% endif %}
+                <hr style="margin: 15px 0; border:0; border-top:1px solid #eee;">
+                <div class="review-group">
+                    <button class="btn-review" onclick="startQuiz()">
+                        <span>🧠 考核模式</span><span id="timer-badge">30:00</span>
+                    </button>
+                    <button class="btn-review btn-flashcard" onclick="startFlashcard()">
+                        <span>🃏 记忆卡片</span><span style="font-size:11px; margin-top:2px;">(Anki 模式)</span>
+                    </button>
+                </div>
+                <button class="btn-notebook" onclick="openNotebookModal()">📚 打开生词本</button>
+                <div style="margin-top:20px;">
+                    <div class="section-title">导入新书</div>
+                    <form method="post" enctype="multipart/form-data" id="upload-form">
+                        <div class="upload-wrapper" id="drop-zone">
+                            <input type="file" name="file" accept=".pdf,.epub,.txt,.mobi" id="file-input">
+                            <div class="upload-visual" id="visual-zone">
+                                <div style="font-size:24px; margin-bottom:5px;">📂</div>
+                                <div id="upload-text">点击选择文件</div>
+                            </div>
+                        </div>
+                    </form>
+                    <!-- iPad 专用上传按钮 -->
+                    <button id="mobile-upload-btn" onclick="document.getElementById('file-input').click()">
+                        📱 点击上传书籍
+                    </button>
+                </div>
+            </div>
+            <div class="section-title">AI Assistant</div>
+            <div id="output">
+                <p>👋 等待查询...</p>
+            </div>
+        </div>
+
+        <script>
+            const bookId = document.getElementById('current-book-id').value;
+            const outputDiv = document.getElementById('output');
+            const tooltip = document.getElementById('word-tooltip');
+            const sentenceBtn = document.getElementById('sentence-btn');
+            let currentNotebookBookId = bookId;
+            let quizQueue = [];
+            let currentQuizCard = null;
+            let timerInterval = null;
+            let timeLeft = 1800;
+
+            // 检测是否为触摸设备
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+            function startTimer() {
+                if (timerInterval) clearInterval(timerInterval);
+                timeLeft = 1800;
+                updateTimerDisplay();
+                timerInterval = setInterval(() => { timeLeft--; updateTimerDisplay(); if (timeLeft <= 0) { startQuiz(true); timeLeft = 1800; } }, 1000);
+            }
+            function updateTimerDisplay() {
+                const m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+                const s = (timeLeft % 60).toString().padStart(2, '0');
+                const badge = document.getElementById('timer-badge');
+                if (badge) badge.innerText = `${m}:${s}`;
+            }
+            if (bookId && bookId != "0") startTimer();
+
+            async function restoreHighlights() {
+                if (!bookId || bookId == "0") return;
+                const res = await fetch('/api/get_book_highlights', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) });
+                const data = await res.json();
+                document.querySelectorAll('.active-word').forEach(el => el.classList.remove('active-word'));
+                data.indices.forEach(idx => {
+                    const el = document.querySelector(`.word[data-index="${idx}"]`);
+                    if (el) el.classList.add('active-word');
+                });
+            }
+
+            const raw = document.getElementById('raw');
+            const formatted = document.getElementById('formatted');
+            if (raw) {
+                let wordCount = 0;
+                formatted.innerHTML = raw.innerText.replace(/([a-zA-Z0-9']+)/g, (match) => {
+                    return `<span class="word" data-index="${wordCount++}">${match}</span>`;
+                });
+                restoreHighlights();
+            }
+
+            // 单词点击处理函数
+            async function handleWordClick(wordEl) {
+                const word = wordEl.innerText;
+                const wordIndex = wordEl.getAttribute('data-index');
+
+                if (wordEl.classList.contains('active-word')) {
+                    wordEl.classList.remove('active-word');
+                    tooltip.style.display = 'none';
+                    return;
+                }
+
+                if (!bookId || bookId == "0") {
+                    alert("请先上传一本书！");
+                    return;
+                }
+
+                wordEl.classList.add('active-word');
+                const rect = wordEl.getBoundingClientRect();
+                tooltip.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
+                tooltip.style.top = (rect.top - 40) + 'px';
+                tooltip.style.display = 'block';
+                tooltip.innerHTML = "🚀...";
+
+                try {
+                    const res = await fetch('/ask_ai', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: word, mode: 'word', book_id: bookId, word_index: wordIndex })
+                    });
+                    const data = await res.json();
+                    tooltip.innerHTML = data.result;
+                    outputDiv.innerHTML = `<h3>${word}</h3><div>${data.result}</div>`;
+                    updateSidebarStats();
+                } catch (err) {
+                    tooltip.innerHTML = "❌";
+                    wordEl.classList.remove('active-word');
+                }
+            }
+
+            // 鼠标点击事件
+            document.addEventListener('click', async (e) => {
+                if (window.getSelection().toString().trim().length > 0) return;
+                if (e.target.classList.contains('word')) {
+                    await handleWordClick(e.target);
+                } else {
+                    if (!tooltip.contains(e.target)) tooltip.style.display = 'none';
+                }
+            });
+
+            // iPad 触摸支持：让单词可点击
+            if (isTouchDevice) {
+                document.addEventListener('touchend', (e) => {
+                    const target = e.target;
+                    if (target.classList.contains('word')) {
+                        // 如果没有选中文本，则处理为单词点击
+                        const selection = window.getSelection().toString().trim();
+                        if (selection.length <= 5) {
+                            e.preventDefault();
+                            handleWordClick(target);
+                        }
+                    }
+                }, { passive: false });
+            }
+
+            async function startQuiz(isAuto = false) {
+                let res = await fetch('/api/due_cards');
+                let data = await res.json();
+
+                if (data.cards.length === 0) {
+                    if (isAuto) return;
+                    if (data.total_exists > 0) {
+                        if (confirm("🎉 复习完成！\n是否【强制复习】所有单词？(考前模式)")) {
+                            res = await fetch('/api/due_cards?force=true');
+                            data = await res.json();
+                            quizQueue = data.cards;
+                            document.getElementById('quiz-modal').style.display = 'flex';
+                            loadNextQuiz();
+                        }
+                    } else {
+                        alert("📚 生词本是空的！请先去查词。");
+                    }
+                    return;
+                }
+                quizQueue = data.cards;
+                document.getElementById('quiz-modal').style.display = 'flex';
+                loadNextQuiz();
+            }
+
+            function loadNextQuiz() {
+                if (quizQueue.length === 0) { alert("🎉 本轮考核完成！"); closeModal('quiz-modal'); return; }
+                currentQuizCard = quizQueue.shift();
+                document.getElementById('quiz-def').innerHTML = currentQuizCard.explanation;
+                const input = document.getElementById('quiz-input');
+                input.value = ""; input.className = ""; input.focus();
+                document.getElementById('quiz-feedback').innerText = "";
+            }
+            async function submitQuiz() {
+                const input = document.getElementById('quiz-input');
+                const userVal = input.value.trim();
+                if (!userVal) return;
+                const res = await fetch('/api/submit_quiz', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_id: currentQuizCard.id, user_input: userVal, correct_word: currentQuizCard.text }) });
+                const data = await res.json();
+                if (data.is_correct) {
+                    input.className = "correct"; document.getElementById('quiz-feedback').innerText = "✅ Correct!"; document.getElementById('quiz-feedback').style.color = "#27ae60"; setTimeout(loadNextQuiz, 1000);
+                } else {
+                    input.className = "wrong"; document.getElementById('quiz-feedback').innerText = `❌ Wrong. Correct: ${currentQuizCard.text}`; document.getElementById('quiz-feedback').style.color = "#e74c3c"; setTimeout(loadNextQuiz, 2500);
+                }
+            }
+            document.getElementById('quiz-input').addEventListener('keypress', function (e) { if (e.key === 'Enter') submitQuiz(); });
+
+            async function startFlashcard() {
+                const res = await fetch('/api/due_cards');
+                const data = await res.json();
+                quizQueue = data.cards;
+                if (quizQueue.length === 0) { alert("🎉 目前没有需要复习的单词！"); return; }
+                document.getElementById('review-modal').style.display = 'flex';
+                loadNextFlashcard();
+            }
+            function loadNextFlashcard() {
+                if (quizQueue.length === 0) { alert("🎉 复习完成！"); closeModal('review-modal'); return; }
+                currentQuizCard = quizQueue.shift();
+                document.getElementById('review-front').innerText = currentQuizCard.text;
+                document.getElementById('review-back').innerHTML = currentQuizCard.explanation;
+                document.getElementById('review-back').style.display = 'none';
+                document.getElementById('btn-show-answer').style.display = 'block';
+                document.getElementById('review-grading').style.display = 'none';
+            }
+            function showReviewAnswer() { document.getElementById('review-back').style.display = 'block'; document.getElementById('btn-show-answer').style.display = 'none'; document.getElementById('review-grading').style.display = 'flex'; }
+            async function rateCard(quality) { await fetch('/api/review_card', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_id: currentQuizCard.id, quality: quality }) }); loadNextFlashcard(); }
+
+            async function renderChart() {
+                const container = document.getElementById('chart-container'); container.innerHTML = "";
+                const res = await fetch('/api/heatmap_data'); const data = await res.json();
+                const today = new Date();
+                for (let i = 29; i >= 0; i--) {
+                    const d = new Date(); d.setDate(today.getDate() - i);
+                    const dateStr = d.toISOString().split('T')[0];
+                    const count = data[dateStr] || 0;
+                    const blocks = count > 0 ? Math.min(Math.ceil(count / 50), 5) : 0;
+                    const col = document.createElement('div'); col.className = 'chart-col';
+                    const countLabel = document.createElement('div'); countLabel.className = count == 0 ? 'chart-count empty' : 'chart-count'; countLabel.innerText = count == 0 ? "0" : `+${count}`; col.appendChild(countLabel);
+                    const blockContainer = document.createElement('div'); blockContainer.className = 'chart-blocks';
+                    for (let b = 0; b < 5; b++) { const unit = document.createElement('div'); unit.className = b < blocks ? 'chart-unit active' : 'chart-unit'; blockContainer.appendChild(unit); }
+                    col.appendChild(blockContainer);
+                    const dateLabel = document.createElement('div'); dateLabel.className = 'chart-date'; dateLabel.innerText = `${d.getMonth() + 1}/${d.getDate()}`; col.appendChild(dateLabel);
+                    container.appendChild(col);
+                }
+                setTimeout(() => { container.scrollLeft = container.scrollWidth; }, 100);
+            }
+
+            async function resetForExam() {
+                if (!bookId || bookId == "0") return;
+                if (!confirm("🔥 确定要进行【全书大考】吗？")) return;
+                const btn = document.getElementById('btn-master'); btn.innerText = "⏳..."; btn.disabled = true;
+                try { const res = await fetch('/reset_book_review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); if (data.status === 'success') { document.getElementById('stat-user-vocab').innerText = data.new_level; alert("✅ 大考开始！"); startQuiz(); } } catch (e) { } finally { btn.innerText = "✅ 已掌握全部单词"; btn.disabled = false; }
+            }
+            async function resetBook() {
+                if (!bookId || bookId == "0") return;
+                if (!confirm("⚠️ 确定要清空本书数据吗？(删除记录、高亮、重置进度)")) return;
+                try { const res = await fetch('/reset_book_progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); if (data.status === 'success') { document.querySelectorAll('.active-word').forEach(el => el.classList.remove('active-word')); updateSidebarStats(); alert("✅ 已重置！"); } } catch (e) { }
+            }
+            async function updateSidebarStats() {
+                if (!bookId || bookId == "0") return;
+                try { const res = await fetch('/get_stats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); document.getElementById('stat-new').innerText = "+" + data.new; document.getElementById('stat-cumulative').innerText = data.cumulative; document.getElementById('stat-user-vocab').innerText = data.user_vocab; document.getElementById('stat-word-count').innerText = data.word_count; } catch (e) { }
+            }
+            function formatCount(num) { return num > 1000 ? (num / 1000).toFixed(1) + 'k' : num; }
+            async function createFolder() { const name = prompt("文件夹名称："); if (name) { await fetch('/create_folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }) }); openNotebookModal(currentNotebookBookId); } }
+            function allowDrop(e) { e.preventDefault(); e.target.closest('.nb-folder-header, .nb-item').classList.add('dragover'); }
+            function dragLeave(e) { e.target.closest('.nb-folder-header, .nb-item').classList.remove('dragover'); }
+            function dragBook(e, bookId) { e.dataTransfer.setData("text/plain", "BOOK:" + bookId); }
+            async function dropBook(e, folderId) { e.preventDefault(); document.querySelectorAll('.dragover').forEach(el => el.classList.remove('dragover')); const data = e.dataTransfer.getData("text/plain"); if (data.startsWith("BOOK:")) { await fetch('/move_book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: data.split(":")[1], folder_id: folderId }) }); openNotebookModal(currentNotebookBookId); } }
+
+            function renderNotebook(data, activeId) {
+                const sidebar = document.getElementById('nb-book-list'); let html = '';
+                data.folders.forEach(folder => { const fBooks = data.books.filter(b => b.folder_id === folder.id); html += `<div class="nb-folder"><div class="nb-folder-header" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="dropBook(event, ${folder.id})">📁 ${folder.name} <span style="opacity:0.5; font-weight:normal;">(${fBooks.length})</span></div><div class="nb-folder-content">` + fBooks.map(b => `<div class="nb-item ${String(b.id) === String(activeId) ? 'active' : ''}" onclick="openNotebookModal(${b.id})" draggable="true" ondragstart="dragBook(event, ${b.id})"><div class="nb-item-content"><div class="nb-title">${b.title}</div></div><button class="nb-delete-btn" onclick="deleteBookFromNotebook(event, ${b.id})">🗑️</button></div>`).join('') + `</div></div>`; });
+                const uBooks = data.books.filter(b => !b.folder_id || b.folder_id === 0); html += uBooks.map(b => `<div class="nb-item ${String(b.id) === String(activeId) ? 'active' : ''}" onclick="openNotebookModal(${b.id})" draggable="true" ondragstart="dragBook(event, ${b.id})"><div class="nb-item-content"><div class="nb-title">${b.title}</div></div><button class="nb-delete-btn" onclick="deleteBookFromNotebook(event, ${b.id})">🗑️</button></div>`).join('');
+                sidebar.innerHTML = html;
+                const titleEl = document.getElementById('nb-current-title'); if (activeId == '0' || activeId == 0) titleEl.innerText = "最近生词 (全部)"; else { const cb = data.books.find(b => String(b.id) === String(activeId)); titleEl.innerText = cb ? cb.title : "生词本"; }
+                const tbody = document.getElementById('nb-tbody'); if (data.items.length === 0) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#999; padding:50px;">空空如也</td></tr>`; else tbody.innerHTML = data.items.map(item => `<tr><td style="font-weight:bold; color:#333;">${item.text}</td><td style="line-height:1.6; color:#555;">${item.explanation}</td><td><span class="type-tag ${item.type === 'word' ? 'type-word' : 'type-sentence'}">${item.type === 'word' ? '单词' : '句子'}</span></td><td style="color:#aaa; font-size:12px;">${item.created_at.substring(0, 10)}</td><td><button class="btn-del-word" onclick="deleteSingleWord(${item.id}, this)">🗑️</button></td></tr>`).join('');
+                renderChart();
+            }
+
+            async function deleteBookFromNotebook(e, id) {
+                e.stopPropagation();
+                if (confirm("⚠️ 确定要删除这本书吗？\n(操作不可撤销)")) {
+                    e.target.innerText = "⏳";
+                    const res = await fetch('/delete_book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: id }) });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        if (String(bookId) === String(id)) window.location.href = "/";
+                        else openNotebookModal(currentNotebookBookId);
+                    } else {
+                        alert("删除失败: " + data.message);
+                        e.target.innerText = "🗑️";
+                    }
+                }
+            }
+
+            async function deleteSingleWord(id, btn) { if (confirm("删除此记录？")) { await fetch('/delete_single_word', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) }); const row = btn.parentElement.parentElement; row.style.opacity = 0; setTimeout(() => row.remove(), 200); restoreHighlights(); } }
+            async function openNotebookModal(targetBookId = null) { const modal = document.getElementById('notebook-modal'); modal.style.display = 'flex'; const queryId = targetBookId !== null ? targetBookId : (bookId || '0'); currentNotebookBookId = queryId; try { const res = await fetch('/api/notebook_data', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: queryId }) }); const data = await res.json(); renderNotebook(data, queryId); } catch (e) { } }
+            async function clearNotebook() { if (confirm("清空？")) { await fetch('/clear_notebook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: currentNotebookBookId }) }); openNotebookModal(currentNotebookBookId); restoreHighlights(); } }
+            function closeModal(id) { document.getElementById(id).style.display = 'none'; if (id === 'vocab-modal') tooltip.style.display = 'none'; }
+            document.querySelectorAll('.modal-overlay').forEach(modal => { modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; }); });
+            if (bookId && bookId !== "0") { const poller = setInterval(async () => { if (document.hidden) return; try { const res = await fetch('/get_stats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); if (data.cumulative >= 0) { document.getElementById('stat-new').innerText = "+" + data.new; document.getElementById('stat-cumulative').innerText = data.cumulative; document.getElementById('stat-user-vocab').innerText = data.user_vocab; document.getElementById('stat-word-count').innerText = data.word_count; if (data.cumulative > 0) { clearInterval(poller); setInterval(() => updateSidebarStats(), 10000); } } } catch (e) { } }, 3000); }
+            const vocabModal = document.getElementById('vocab-modal'); const vocabList = document.getElementById('modal-list'); const trashZone = document.getElementById('trash-zone');
+            trashZone.addEventListener('dragover', (e) => { e.preventDefault(); if (!trashZone.classList.contains('dragover')) trashZone.classList.add('dragover'); });
+            trashZone.addEventListener('dragleave', () => { trashZone.classList.remove('dragover'); });
+            trashZone.addEventListener('drop', async (e) => { e.preventDefault(); trashZone.classList.remove('dragover'); const word = e.dataTransfer.getData("text/plain"); if (word && !word.startsWith("BOOK:")) { await fetch('/add_to_ignore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ word: word }) }); document.querySelectorAll('.vocab-item').forEach(item => { if (item.innerText === word) { item.style.transform = 'scale(0)'; setTimeout(() => item.remove(), 200); } }); updateSidebarStats(); trashZone.innerText = `✅ 已删除`; setTimeout(() => trashZone.innerText = "🗑️ 删除", 1500); } });
+            async function showVocab(type) { if (!bookId || bookId == "0") return; document.getElementById('vocab-modal').style.display = 'flex'; vocabList.innerHTML = '<p>读取中...</p>'; document.getElementById('modal-title').innerText = type === 'cumulative' ? '👑 我的掌握词汇库' : '本书新词'; const res = await fetch('/get_vocab_details', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId, type: type }) }); const data = await res.json(); vocabList.innerHTML = ''; if (data.words.length === 0) { vocabList.innerHTML = '<p>暂无数据</p>'; return; } document.getElementById('modal-title').innerText += ` (${data.count})`; data.words.forEach(word => { const span = document.createElement('span'); span.className = 'vocab-item'; span.innerText = word; span.draggable = true; span.addEventListener('dragstart', (e) => { e.dataTransfer.setData("text/plain", word); }); span.onclick = async (e) => { e.stopPropagation(); document.querySelectorAll('.vocab-item').forEach(el => el.classList.remove('active-modal-word')); span.classList.add('active-modal-word'); const r = await fetch('/ask_ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: word, mode: 'word', book_id: bookId }) }); const d = await r.json(); outputDiv.innerHTML = `<h3>${word}</h3>${d.result}`; }; vocabList.appendChild(span); }); }
+
+            // ========== 文件上传处理 ==========
+            const fileInput = document.getElementById('file-input');
+            const uploadForm = document.getElementById('upload-form');
+            const uploadText = document.getElementById('upload-text');
+            const visualZone = document.getElementById('visual-zone');
+            const dropZone = document.getElementById('drop-zone');
+
+            // 文件选择处理（兼容 iPad 和 Mac）
+            fileInput.addEventListener('change', () => {
+                if (fileInput.files.length > 0) {
+                    const fileName = fileInput.files[0].name;
+                    uploadText.innerText = "⏳ 正在上传: " + fileName.substring(0, 20) + "...";
+                    visualZone.style.background = "#eef6ff";
+                    visualZone.style.borderColor = "#007bff";
+
+                    // iPad 可能需要更长延迟
+                    setTimeout(() => uploadForm.submit(), 100);
+                }
+            });
+
+            // iPad 触摸上传支持
+            if (isTouchDevice) {
+                // 点击整个区域触发文件选择
+                dropZone.addEventListener('click', (e) => {
+                    if (e.target !== fileInput) {
+                        fileInput.click();
+                    }
+                });
+
+                // 触摸反馈
+                dropZone.addEventListener('touchstart', () => {
+                    visualZone.style.background = "#e8f4ff";
+                    visualZone.style.borderColor = "#007bff";
+                });
+
+                dropZone.addEventListener('touchend', () => {
+                    if (!fileInput.files.length) {
+                        visualZone.style.background = "#fff";
+                        visualZone.style.borderColor = "#ccc";
+                    }
+                });
+            }
+
+            // Mac 拖拽上传视觉反馈（所有设备都启用）
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    visualZone.classList.add('dragover');
+                    visualZone.style.borderColor = "#007bff";
+                    visualZone.style.background = "#e8f4ff";
+                });
+            });
+
+            ['dragleave'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // 只有当离开整个 dropZone 时才移除样式
+                    const rect = dropZone.getBoundingClientRect();
+                    if (e.clientX < rect.left || e.clientX >= rect.right ||
+                        e.clientY < rect.top || e.clientY >= rect.bottom) {
+                        visualZone.classList.remove('dragover');
+                        visualZone.style.borderColor = "#ccc";
+                        visualZone.style.background = "#fff";
+                    }
+                });
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                visualZone.classList.remove('dragover');
+                visualZone.style.borderColor = "#ccc";
+                visualZone.style.background = "#fff";
+            });
+
+            // ========== 句子选择处理（支持 iPad 和 Mac）==========
+            function handleTextSelection(e) {
+                const selection = window.getSelection().toString().trim();
+                if (selection.length > 5) {
+                    let clientX, clientY;
+
+                    // 判断是触摸事件还是鼠标事件
+                    if (e.type === 'touchend' && e.changedTouches && e.changedTouches.length > 0) {
+                        const touch = e.changedTouches[0];
+                        clientX = touch.clientX;
+                        clientY = touch.clientY;
+                    } else {
+                        clientX = e.clientX;
+                        clientY = e.clientY;
+                    }
+
+                    let leftPos = clientX + 10;
+                    if (leftPos > window.innerWidth - 150) leftPos = clientX - 140;
+
+                    // 确保按钮不超出屏幕
+                    let topPos = clientY + 15;
+                    if (topPos > window.innerHeight - 60) topPos = clientY - 50;
+
+                    sentenceBtn.style.left = leftPos + 'px';
+                    sentenceBtn.style.top = topPos + 'px';
+                    sentenceBtn.style.display = 'block';
+                } else {
+                    sentenceBtn.style.display = 'none';
+                }
+            }
+
+            // 鼠标事件（Mac）
+            document.addEventListener('mouseup', handleTextSelection);
+
+            // 触摸事件（iPad）
+            document.addEventListener('touchend', (e) => {
+                // 延迟一下让系统完成选择
+                setTimeout(() => handleTextSelection(e), 150);
+            });
+
+            // 防止触摸时按钮消失
+            sentenceBtn.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+            });
+
+            // 防止按钮点击时文本选择消失（兼容触摸和鼠标）
+            sentenceBtn.onmousedown = (e) => { e.preventDefault(); };
+            sentenceBtn.ontouchstart = (e) => { e.preventDefault(); };
+
+            sentenceBtn.onclick = async () => {
+                const selectedText = window.getSelection().toString().trim();
+                sentenceBtn.innerText = "⏳...";
+                outputDiv.innerHTML = "<div style='color:#0052cc;'>🧠 DeepSeek...</div>";
+                try {
+                    const res = await fetch('/ask_ai', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: selectedText, mode: 'sentence', book_id: bookId })
+                    });
+                    const data = await res.json();
+                    outputDiv.innerHTML = `<div style="background:#e8f5e9; padding:10px; border-radius:8px;">"${selectedText.substring(0, 50)}..."</div>${data.result}`;
+                } catch (err) {
+                    outputDiv.innerHTML = "Error";
+                }
+                sentenceBtn.innerText = "✨ Explain";
+                sentenceBtn.style.display = 'none';
+                window.getSelection().removeAllRanges();
+            };
+        </script>
+    </div><!-- end main-container -->
+</body>
+
+</html>
