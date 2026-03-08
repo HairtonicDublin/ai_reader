@@ -3,15 +3,16 @@ import sys
 import sqlite3
 import threading
 import re
-import time
-import json
 import logging
 import traceback
 import hashlib
 import secrets
 from datetime import datetime, timedelta
 from functools import wraps
+from markupsafe import escape as html_escape
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 logging.basicConfig(level=logging.INFO)
 
@@ -94,8 +95,20 @@ def handle_exception(e):
     logging.error(traceback.format_exc())
     return jsonify({'error': str(e)}), 500
 
+# 加载 .env 文件
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+if os.path.exists(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _key, _val = _line.split('=', 1)
+                os.environ.setdefault(_key.strip(), _val.strip())
+
 # 配置
-DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', 'sk-cae2748e8598422babdd661c334a70f0')
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+if not DEEPSEEK_API_KEY:
+    logging.warning("⚠️ DEEPSEEK_API_KEY 未设置，AI 翻译功能将不可用。请设置环境变量 DEEPSEEK_API_KEY")
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 
 UPLOAD_FOLDER = os.path.join(get_data_dir(), 'uploads')
@@ -135,8 +148,15 @@ def get_db_path():
 # ============================================
 
 def hash_password(password):
-    """密码加密"""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """密码加密 - 使用 werkzeug 安全哈希 (pbkdf2:sha256)"""
+    return generate_password_hash(password, method='pbkdf2:sha256')
+
+def verify_password(stored_hash, password):
+    """验证密码 - 兼容旧版 SHA256 哈希，成功后自动升级"""
+    if stored_hash.startswith(('pbkdf2:', 'scrypt:')):
+        return check_password_hash(stored_hash, password)
+    # 兼容旧版 SHA256 裸哈希
+    return stored_hash == hashlib.sha256(password.encode()).hexdigest()
 
 def init_db():
     db_path = get_db_path()
@@ -267,9 +287,8 @@ threading.Thread(target=init_nltk, daemon=True).start()
 init_db()
 
 # --- 核心逻辑 ---
-def is_valid_word(word, user_id):
+def is_valid_word(word, ignore_set):
     word = word.lower()
-    ignore_set = get_user_ignore_set(user_id)
     if word in ignore_set:
         return False
     if len(word) < 2 and word not in ['a', 'i']:
@@ -278,26 +297,30 @@ def is_valid_word(word, user_id):
         return False
     return True
 
-def extract_words_list(text, user_id):
+def extract_words_list(text, user_id, ignore_set=None):
     if not text:
         return []
-    return [w for w in re.findall(r'\b[a-z]+\b', text.lower()) if is_valid_word(w, user_id)]
+    if ignore_set is None:
+        ignore_set = get_user_ignore_set(user_id)
+    return [w for w in re.findall(r'\b[a-z]+\b', text.lower()) if is_valid_word(w, ignore_set)]
 
-def extract_words(text, user_id):
-    return set(extract_words_list(text, user_id))
+def extract_words(text, user_id, ignore_set=None):
+    return set(extract_words_list(text, user_id, ignore_set))
 
 def recalculate_chain(user_id):
+    ignore_set = get_user_ignore_set(user_id)
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
     c.execute("SELECT id, content FROM books WHERE user_id = ? ORDER BY id ASC", (user_id,))
     books = c.fetchall()
     global_vocab = set()
     for bid, content in books:
-        words = set(extract_words_list(content, user_id))
+        word_list = extract_words_list(content, user_id, ignore_set)
+        words = set(word_list)
         new_count = len(words - global_vocab)
         global_vocab.update(words)
         c.execute("UPDATE books SET total_vocab=?, new_vocab=?, cumulative_vocab=?, word_count=? WHERE id=?",
-                  (len(words), new_count, len(global_vocab), len(extract_words_list(content, user_id)), bid))
+                  (len(words), new_count, len(global_vocab), len(word_list), bid))
     conn.commit()
     conn.close()
 
@@ -309,7 +332,43 @@ def analyze_vocabulary_task(bid, text, user_id):
     conn.close()
     recalculate_chain(user_id)
 
+def lookup_free_dictionary(word):
+    """使用免费词典 API 查询单词释义（无需 API key）"""
+    if not HAS_REQUESTS:
+        return None, None
+    for attempt in range(2):
+        try:
+            resp = requests.get(
+                f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}",
+                timeout=8
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and isinstance(data, list):
+                    entry = data[0]
+                    # 提取英文释义
+                    en_def = None
+                    for meaning in entry.get('meanings', []):
+                        defs = meaning.get('definitions', [])
+                        if defs:
+                            en_def = defs[0].get('definition', '')
+                            if en_def:
+                                break
+                    # 提取音标
+                    phonetic = entry.get('phonetic', '')
+                    return en_def, phonetic
+            return None, None  # 404 等非 200 状态码不重试
+        except requests.exceptions.Timeout:
+            if attempt == 0:
+                continue  # 超时重试一次
+        except Exception as e:
+            logging.error(f"Free Dictionary API 查询失败: {e}")
+            break
+    return None, None
+
 def call_deepseek(prompt, max_tokens=200):
+    if not DEEPSEEK_API_KEY:
+        return "请设置 DEEPSEEK_API_KEY 环境变量以使用 AI 功能"
     if not HAS_REQUESTS:
         return "Error: requests library missing."
     try:
@@ -386,10 +445,13 @@ def login():
     c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
     user = c.fetchone()
     
-    if user and user[1] == hash_password(password):
+    if user and verify_password(user[1], password):
         session['user_id'] = user[0]
         session['username'] = username
         session.permanent = True
+        # 自动升级旧版 SHA256 哈希到安全哈希
+        if not user[1].startswith(('pbkdf2:', 'scrypt:')):
+            c.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(password), user[0]))
         c.execute("UPDATE users SET last_login = ? WHERE id = ?",
                   (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user[0]))
         conn.commit()
@@ -463,31 +525,42 @@ def index():
     if request.method == 'POST' and 'file' in request.files:
         f = request.files['file']
         if f.filename:
+            safe_name = secure_filename(f.filename)
+            if not safe_name:
+                safe_name = 'uploaded_file'
             user_upload_folder = os.path.join(app.config['UPLOAD_FOLDER'], str(user_id))
             if not os.path.exists(user_upload_folder):
                 os.makedirs(user_upload_folder)
-            
-            path = os.path.join(user_upload_folder, f.filename)
+
+            path = os.path.join(user_upload_folder, safe_name)
             f.save(path)
-            bid = register_book(f.filename, user_id)
-            title = f.filename
-            
-            ext = f.filename.lower()
+            # 用原始文件名作为显示标题，安全文件名用于存储
+            display_name = f.filename
+            bid = register_book(display_name, user_id)
+            title = display_name
+
+            ext = safe_name.lower()
             if ext.endswith(('.pdf', '.epub', '.mobi')):
                 content = extract_book_smart(path)
             else:
                 try:
-                    content = open(path, 'r', encoding='utf-8').read()
-                except:
+                    with open(path, 'r', encoding='utf-8') as fh:
+                        content = fh.read()
+                except Exception:
                     try:
-                        content = open(path, 'r', encoding='gb18030').read()
-                    except:
-                        content = open(path, 'r', encoding='utf-8', errors='ignore').read()
+                        with open(path, 'r', encoding='gb18030') as fh:
+                            content = fh.read()
+                    except Exception:
+                        with open(path, 'r', encoding='utf-8', errors='ignore') as fh:
+                            content = fh.read()
 
             threading.Thread(target=analyze_vocabulary_task, args=(bid, content, user_id), daemon=True).start()
             
     elif request.args.get('book_id'):
-        bid = int(request.args.get('book_id'))
+        try:
+            bid = int(request.args.get('book_id'))
+        except (ValueError, TypeError):
+            bid = 0
         conn = sqlite3.connect(get_db_path())
         c = conn.cursor()
         c.execute("SELECT title, content FROM books WHERE id=? AND user_id=?", (bid, user_id))
@@ -628,45 +701,86 @@ def ask_ai():
         cn = ""
         en = ""
         
-        # 尝试翻译
+        # 尝试翻译（Google Translate -> DeepSeek 回退）
         try:
             if HAS_TRANSLATOR:
                 cn = GoogleTranslator(source='auto', target='zh-CN').translate(text)
                 if not cn:
-                    cn = text  # 如果翻译返回空，使用原词
+                    cn = text
+            elif DEEPSEEK_API_KEY:
+                cn = call_deepseek(f"Translate the English word '{text}' to Chinese. Only output the Chinese translation, nothing else.", 50) or text
             else:
                 cn = text
         except Exception as e:
             logging.error(f"翻译失败: {e}")
-            cn = text
+            if DEEPSEEK_API_KEY:
+                try:
+                    cn = call_deepseek(f"Translate the English word '{text}' to Chinese. Only output the Chinese translation, nothing else.", 50) or text
+                except Exception:
+                    cn = text
+            else:
+                cn = text
+        cn = str(html_escape(cn))
         
-        # 尝试获取英文定义
+        # 尝试获取英文定义（多级回退：WordNet -> Free Dictionary API -> DeepSeek）
+        phonetic = ""
         try:
-            syns = wordnet.synsets(text)
+            lookup_word = text.lower()
+            syns = wordnet.synsets(lookup_word)
+
+            # 如果直接查不到，尝试词形还原后再查
+            if not syns and lemmatizer:
+                for pos in ['v', 'n', 'a', 'r']:
+                    lemma = lemmatizer.lemmatize(lookup_word, pos)
+                    if lemma != lookup_word:
+                        syns = wordnet.synsets(lemma)
+                        if syns:
+                            break
+
             if syns:
                 en = syns[0].definition().capitalize() + "."
             else:
-                en = "No definition available."
+                # WordNet 无结果，尝试免费词典 API
+                free_def, phonetic_text = lookup_free_dictionary(lookup_word)
+                if free_def:
+                    en = free_def.capitalize()
+                    if not en.endswith('.'):
+                        en += "."
+                    if phonetic_text:
+                        phonetic = phonetic_text
+                elif DEEPSEEK_API_KEY:
+                    en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
+                else:
+                    en = ""
         except Exception as e:
             logging.error(f"词典查询失败: {e}")
-            en = "Definition not found."
-        
-        # 包装英文定义中的单词
+            en = ""
+        en = str(html_escape(en))
+
+        # 包装英文定义中的单词（在转义之后安全地添加 HTML 标签）
         def wrap(m):
             return f'<span class="word nested-word">{m.group(0)}</span>'
         if en:
             en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
         
-        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
+        phonetic_html = f"<div style='font-size:13px;color:#888;margin-top:2px'>{html_escape(phonetic)}</div>" if phonetic else ""
+        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div>{phonetic_html}<div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
     else:
         res = call_deepseek(f"Translate and Analyze: {text}", 500)
         if not res:
             res = "无法获取解释"
+        res = str(html_escape(res))
 
-    # 保存到生词本
+    # 保存到生词本（避免重复插入）
     try:
-        c.execute("INSERT INTO notebook (user_id, text, explanation, type, book_id, word_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  (user_id, text, res, mode, bid, wid, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        if mode == 'word' and wid is not None:
+            c.execute("SELECT id FROM notebook WHERE user_id=? AND book_id=? AND word_index=?", (user_id, bid, wid))
+            if not c.fetchone():
+                c.execute("INSERT INTO notebook (user_id, text, explanation, type, book_id, word_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                          (user_id, text, res, mode, bid, wid, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        else:
+            c.execute("INSERT INTO notebook (user_id, text, explanation, type, book_id, word_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (user_id, text, res, mode, bid, wid, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
         conn.commit()
     except Exception as e:
         logging.error(f"保存生词失败: {e}")
@@ -685,11 +799,13 @@ def delete_book():
         c.execute("DELETE FROM notebook WHERE book_id = ? AND user_id = ?", (book_id, user_id))
         c.execute("DELETE FROM books WHERE id = ? AND user_id = ?", (book_id, user_id))
         conn.commit()
-        conn.close()
         recalculate_chain(user_id)
         return jsonify({'status': 'success'})
     except Exception as e:
+        logging.error(f"删除书籍失败: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
+    finally:
+        conn.close()
 
 @app.route('/reset_book_progress', methods=['POST'])
 @login_required
@@ -791,33 +907,41 @@ def review_card_api():
     d = request.json
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
-    now = datetime.now()
-    if d['quality'] == 1:
-        next_t = now + timedelta(minutes=1)
-    elif d['quality'] == 3:
-        next_t = now + timedelta(minutes=15)
-    else:
-        next_t = now + timedelta(hours=1)
-    c.execute('UPDATE notebook SET next_review = ?, interval = 0 WHERE id = ? AND user_id = ?',
-              (next_t.strftime('%Y-%m-%d %H:%M:%S'), d['card_id'], user_id))
-    conn.commit()
-    conn.close()
-    return jsonify({'status': 'success'})
+    try:
+        now = datetime.now()
+        if d['quality'] == 1:
+            next_t = now + timedelta(minutes=1)
+        elif d['quality'] == 3:
+            next_t = now + timedelta(minutes=15)
+        else:
+            next_t = now + timedelta(hours=1)
+        c.execute('UPDATE notebook SET next_review = ?, interval = 0 WHERE id = ? AND user_id = ?',
+                  (next_t.strftime('%Y-%m-%d %H:%M:%S'), d['card_id'], user_id))
+        conn.commit()
+        return jsonify({'status': 'success'})
+    except Exception as e:
+        logging.error(f"复习卡片更新失败: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    finally:
+        conn.close()
 
 @app.route('/api/get_book_highlights', methods=['POST'])
 @login_required
 def get_highlights():
     user_id = get_current_user_id()
+    conn = None
     try:
         conn = sqlite3.connect(get_db_path())
         c = conn.cursor()
         c.execute("SELECT word_index FROM notebook WHERE user_id = ? AND book_id = ? AND word_index IS NOT NULL",
                   (user_id, request.json.get('book_id')))
         indices = [row[0] for row in c.fetchall()]
-        conn.close()
         return jsonify({'indices': indices})
-    except:
+    except Exception:
         return jsonify({'indices': []})
+    finally:
+        if conn:
+            conn.close()
 
 @app.route('/create_folder', methods=['POST'])
 @login_required
@@ -891,6 +1015,7 @@ def vocab_det():
     user_id = get_current_user_id()
     book_id = request.json.get('book_id')
     type_ = request.json.get('type')
+    ignore_set = get_user_ignore_set(user_id)
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
     c.execute("SELECT id, content FROM books WHERE user_id = ? ORDER BY id ASC", (user_id,))
@@ -901,11 +1026,11 @@ def vocab_det():
     found = False
     for bid, ct in books:
         if str(bid) == str(book_id):
-            t_set = extract_words(ct, user_id)
+            t_set = extract_words(ct, user_id, ignore_set)
             found = True
             break
         else:
-            g_set.update(extract_words(ct, user_id))
+            g_set.update(extract_words(ct, user_id, ignore_set))
     res = sorted(list(t_set - g_set)) if type_ == 'new' and found else sorted(list(t_set.union(g_set))) if type_ == 'cumulative' else []
     return jsonify({'words': res, 'count': len(res)})
 

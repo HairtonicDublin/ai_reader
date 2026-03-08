@@ -1094,7 +1094,7 @@
                 </div>
                 <div class="card-actions">
                     <button id="btn-show-answer" onclick="showReviewAnswer()">查看答案</button>
-                    <div id="review-grading" style="display:none; width:100%; gap:10px; display:flex;">
+                    <div id="review-grading" style="display:none; width:100%; gap:10px;">
                         <button class="btn-rate rate-again" onclick="rateCard(1)">忘记 (1m)</button>
                         <button class="btn-rate rate-good" onclick="rateCard(3)">记得 (15m)</button>
                         <button class="btn-rate rate-easy" onclick="rateCard(5)">简单 (1h)</button>
@@ -1113,7 +1113,7 @@
                     style="color:#aaa; font-size:14px; margin-bottom:20px; border-bottom:1px solid #eee; padding-bottom:10px;">
                     当前阅读: <b>{{ book_title }}</b>
                 </div>
-                <div id="raw" style="display:none">{{ content }}</div>
+                <div id="raw" style="display:none">{{ content | e }}</div>
                 <div id="formatted"></div>
                 {% else %}
                 <div
@@ -1466,7 +1466,7 @@
             async function clearNotebook() { if (confirm("清空？")) { await fetch('/clear_notebook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: currentNotebookBookId }) }); openNotebookModal(currentNotebookBookId); restoreHighlights(); } }
             function closeModal(id) { document.getElementById(id).style.display = 'none'; if (id === 'vocab-modal') tooltip.style.display = 'none'; }
             document.querySelectorAll('.modal-overlay').forEach(modal => { modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; }); });
-            if (bookId && bookId !== "0") { const poller = setInterval(async () => { if (document.hidden) return; try { const res = await fetch('/get_stats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); if (data.cumulative >= 0) { document.getElementById('stat-new').innerText = "+" + data.new; document.getElementById('stat-cumulative').innerText = data.cumulative; document.getElementById('stat-user-vocab').innerText = data.user_vocab; document.getElementById('stat-word-count').innerText = data.word_count; if (data.cumulative > 0) { clearInterval(poller); setInterval(() => updateSidebarStats(), 10000); } } } catch (e) { } }, 3000); }
+            if (bookId && bookId !== "0") { let pollCount = 0; const poller = setInterval(async () => { if (document.hidden) return; pollCount++; try { const res = await fetch('/get_stats', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); if (data.cumulative >= 0) { document.getElementById('stat-new').innerText = "+" + data.new; document.getElementById('stat-cumulative').innerText = data.cumulative; document.getElementById('stat-user-vocab').innerText = data.user_vocab; document.getElementById('stat-word-count').innerText = data.word_count; if (data.cumulative > 0 || pollCount >= 10) { clearInterval(poller); } } } catch (e) { } }, 3000); }
             const vocabModal = document.getElementById('vocab-modal'); const vocabList = document.getElementById('modal-list'); const trashZone = document.getElementById('trash-zone');
             trashZone.addEventListener('dragover', (e) => { e.preventDefault(); if (!trashZone.classList.contains('dragover')) trashZone.classList.add('dragover'); });
             trashZone.addEventListener('dragleave', () => { trashZone.classList.remove('dragover'); });
