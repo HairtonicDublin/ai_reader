@@ -682,59 +682,61 @@ def ask_ai():
     if mode == 'word':
         cn = ""
         en = ""
-        
-        # 尝试翻译
-        try:
-            if HAS_TRANSLATOR:
-                cn = GoogleTranslator(source='auto', target='zh-CN').translate(text)
+
+        # 优先使用 DeepSeek 一次性获取中英文释义
+        if DEEPSEEK_API_KEY:
+            try:
+                ai_result = call_deepseek(
+                    f"请为英语单词 '{text}' 提供简洁释义，格式如下（不要多余内容）：\n中文：<中文意思>\n英文：<English definition in one sentence>",
+                    150
+                )
+                if ai_result and not ai_result.startswith(('API Error', 'Net Error', '请设置')):
+                    # 解析 DeepSeek 返回的中英文释义
+                    for line in ai_result.strip().split('\n'):
+                        line = line.strip()
+                        if line.startswith('中文：') or line.startswith('中文:'):
+                            cn = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+                        elif line.startswith('英文：') or line.startswith('英文:'):
+                            en = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+                    # 如果格式解析失败，整体作为释义
+                    if not cn and not en:
+                        cn = ai_result.strip()
+            except Exception as e:
+                logging.error(f"DeepSeek 查词失败: {e}")
+
+        # DeepSeek 未返回结果时，回退到离线词典
+        if not cn:
+            try:
+                if HAS_TRANSLATOR:
+                    cn = GoogleTranslator(source='auto', target='zh-CN').translate(text)
                 if not cn:
                     cn = text
-            else:
+            except Exception:
                 cn = text
-        except Exception as e:
-            logging.error(f"翻译失败: {e}")
-            cn = text
-        cn = str(html_escape(cn))
-        
-        # 尝试获取英文定义（多级回退：WordNet -> Free Dictionary API -> DeepSeek）
-        phonetic = ""
-        try:
-            lookup_word = text.lower()
-            syns = wordnet.synsets(lookup_word)
-            
-            # 如果直接查不到，尝试词形还原后再查
-            if not syns and lemmatizer:
-                for pos in ['v', 'n', 'a', 'r']:
-                    lemma = lemmatizer.lemmatize(lookup_word, pos)
-                    if lemma != lookup_word:
-                        syns = wordnet.synsets(lemma)
-                        if syns:
-                            break
-            
-            if syns:
-                en = syns[0].definition().capitalize() + "."
-            else:
-                # WordNet 无结果，尝试免费词典 API（内部自动尝试词形还原）
-                free_def, phonetic_text = lookup_free_dictionary(lookup_word)
-                if free_def:
-                    en = free_def.capitalize()
-                    if not en.endswith('.'):
-                        en += "."
-                    if phonetic_text:
-                        phonetic = phonetic_text
-                elif DEEPSEEK_API_KEY:
-                    en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
+
+        if not en:
+            try:
+                lookup_word = text.lower()
+                syns = wordnet.synsets(lookup_word)
+                if not syns and lemmatizer:
+                    for pos in ['v', 'n', 'a', 'r']:
+                        lemma = lemmatizer.lemmatize(lookup_word, pos)
+                        if lemma != lookup_word:
+                            syns = wordnet.synsets(lemma)
+                            if syns:
+                                break
+                if syns:
+                    en = syns[0].definition().capitalize() + "."
                 else:
-                    en = ""
-        except Exception as e:
-            logging.error(f"词典查询失败: {e}")
-            if DEEPSEEK_API_KEY:
-                try:
-                    en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
-                except Exception:
-                    en = ""
-            else:
-                en = ""
+                    free_def, _ = lookup_free_dictionary(lookup_word)
+                    if free_def:
+                        en = free_def.capitalize()
+                        if not en.endswith('.'):
+                            en += "."
+            except Exception as e:
+                logging.error(f"离线词典查询失败: {e}")
+
+        cn = str(html_escape(cn))
         en = str(html_escape(en))
 
         # 包装英文定义中的单词（在转义之后安全地添加 HTML 标签）
@@ -742,9 +744,8 @@ def ask_ai():
             return f'<span class="word nested-word">{m.group(0)}</span>'
         if en:
             en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
-        
-        phonetic_html = f"<div style='font-size:13px;color:#888;margin-top:2px'>{html_escape(phonetic)}</div>" if phonetic else ""
-        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div>{phonetic_html}<div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
+
+        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
     else:
         res = call_deepseek(f"Translate and Analyze: {text}", 500)
         if not res:
