@@ -501,12 +501,24 @@
             font-weight: bold;
             color: #f1f2f6;
             font-size: 13px;
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+
+        .nb-folder-header.drag-over,
+        .nb-item[data-drop-folder].drag-over {
+            background: #1abc9c !important;
+            color: #fff;
+            box-shadow: inset 0 0 0 2px #16a085;
         }
 
         .nb-folder-content {
             padding-left: 10px;
             background: #253342;
             display: block;
+        }
+
+        .nb-item.drag-source {
+            opacity: 0.4;
         }
 
         .nb-item {
@@ -1026,8 +1038,8 @@
                         <button class="btn-add-folder" onclick="createFolder()">+ 新建文件夹</button>
                     </div>
                     <div id="nb-item-container" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
-                        <div class="nb-item" onclick="openNotebookModal('0')" ondragover="allowDrop(event)"
-                            ondrop="dropBook(event, 0)"
+                        <div class="nb-item" data-drop-folder="0" onclick="openNotebookModal('0')" ondragover="allowDrop(event)"
+                            ondragleave="dragLeave(event)" ondrop="dropBook(event, 0)"
                             style="background: #253342; border-bottom: 2px solid #34495e; flex-shrink:0;">
                             <div class="nb-item-content">
                                 <div class="nb-title">🕒 最近记录 / 全部</div>
@@ -1430,15 +1442,59 @@
             }
             function formatCount(num) { return num > 1000 ? (num / 1000).toFixed(1) + 'k' : num; }
             async function createFolder() { const name = prompt("文件夹名称："); if (name) { await fetch('/create_folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }) }); openNotebookModal(currentNotebookBookId); } }
-            function allowDrop(e) { e.preventDefault(); e.target.closest('.nb-folder-header, .nb-item').classList.add('dragover'); }
-            function dragLeave(e) { e.target.closest('.nb-folder-header, .nb-item').classList.remove('dragover'); }
-            function dragBook(e, bookId) { e.dataTransfer.setData("text/plain", "BOOK:" + bookId); }
-            async function dropBook(e, folderId) { e.preventDefault(); document.querySelectorAll('.dragover').forEach(el => el.classList.remove('dragover')); const data = e.dataTransfer.getData("text/plain"); if (data.startsWith("BOOK:")) { await fetch('/move_book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: data.split(":")[1], folder_id: folderId }) }); openNotebookModal(currentNotebookBookId); } }
+            let dragSourceBookId = null;
+            function allowDrop(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                const target = e.target.closest('.nb-folder-header, .nb-item[data-drop-folder]');
+                if (target) target.classList.add('drag-over');
+            }
+            function dragLeave(e) {
+                const target = e.target.closest('.nb-folder-header, .nb-item[data-drop-folder]');
+                if (target) {
+                    const rect = target.getBoundingClientRect();
+                    if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+                        target.classList.remove('drag-over');
+                    }
+                }
+            }
+            function dragBook(e, bookId) {
+                dragSourceBookId = bookId;
+                e.dataTransfer.setData("text/plain", "BOOK:" + bookId);
+                e.dataTransfer.effectAllowed = 'move';
+                setTimeout(() => { const el = e.target.closest('.nb-item'); if (el) el.classList.add('drag-source'); }, 0);
+            }
+            function dragBookEnd(e) {
+                document.querySelectorAll('.drag-source').forEach(el => el.classList.remove('drag-source'));
+                document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+                dragSourceBookId = null;
+            }
+            async function dropBook(e, folderId) {
+                e.preventDefault();
+                e.stopPropagation();
+                document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+                document.querySelectorAll('.drag-source').forEach(el => el.classList.remove('drag-source'));
+                const data = e.dataTransfer.getData("text/plain");
+                if (data.startsWith("BOOK:")) {
+                    const bid = data.split(":")[1];
+                    await fetch('/move_book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bid, folder_id: folderId }) });
+                    openNotebookModal(currentNotebookBookId);
+                }
+            }
 
             function renderNotebook(data, activeId) {
                 const sidebar = document.getElementById('nb-book-list'); let html = '';
-                data.folders.forEach(folder => { const fBooks = data.books.filter(b => b.folder_id === folder.id); html += `<div class="nb-folder"><div class="nb-folder-header" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="dropBook(event, ${folder.id})">📁 ${folder.name} <span style="opacity:0.5; font-weight:normal;">(${fBooks.length})</span></div><div class="nb-folder-content">` + fBooks.map(b => `<div class="nb-item ${String(b.id) === String(activeId) ? 'active' : ''}" onclick="openNotebookModal(${b.id})" draggable="true" ondragstart="dragBook(event, ${b.id})"><div class="nb-item-content"><div class="nb-title">${b.title}</div></div><button class="nb-delete-btn" onclick="deleteBookFromNotebook(event, ${b.id})">🗑️</button></div>`).join('') + `</div></div>`; });
-                const uBooks = data.books.filter(b => !b.folder_id || b.folder_id === 0); html += uBooks.map(b => `<div class="nb-item ${String(b.id) === String(activeId) ? 'active' : ''}" onclick="openNotebookModal(${b.id})" draggable="true" ondragstart="dragBook(event, ${b.id})"><div class="nb-item-content"><div class="nb-title">${b.title}</div></div><button class="nb-delete-btn" onclick="deleteBookFromNotebook(event, ${b.id})">🗑️</button></div>`).join('');
+                data.folders.forEach(folder => {
+                    const fBooks = data.books.filter(b => b.folder_id === folder.id);
+                    html += `<div class="nb-folder">` +
+                        `<div class="nb-folder-header" ondragover="allowDrop(event)" ondragleave="dragLeave(event)" ondrop="dropBook(event, ${folder.id})">` +
+                        `📁 ${folder.name} <span style="opacity:0.5; font-weight:normal;">(${fBooks.length})</span></div>` +
+                        `<div class="nb-folder-content">` +
+                        fBooks.map(b => `<div class="nb-item ${String(b.id) === String(activeId) ? 'active' : ''}" onclick="openNotebookModal(${b.id})" draggable="true" ondragstart="dragBook(event, ${b.id})" ondragend="dragBookEnd(event)"><div class="nb-item-content"><div class="nb-title">${b.title}</div></div><button class="nb-delete-btn" onclick="deleteBookFromNotebook(event, ${b.id})">🗑️</button></div>`).join('') +
+                        `</div></div>`;
+                });
+                const uBooks = data.books.filter(b => !b.folder_id || b.folder_id === 0);
+                html += uBooks.map(b => `<div class="nb-item ${String(b.id) === String(activeId) ? 'active' : ''}" onclick="openNotebookModal(${b.id})" draggable="true" ondragstart="dragBook(event, ${b.id})" ondragend="dragBookEnd(event)"><div class="nb-item-content"><div class="nb-title">${b.title}</div></div><button class="nb-delete-btn" onclick="deleteBookFromNotebook(event, ${b.id})">🗑️</button></div>`).join('');
                 sidebar.innerHTML = html;
                 const titleEl = document.getElementById('nb-current-title'); if (activeId == '0' || activeId == 0) titleEl.innerText = "最近生词 (全部)"; else { const cb = data.books.find(b => String(b.id) === String(activeId)); titleEl.innerText = cb ? cb.title : "生词本"; }
                 const tbody = document.getElementById('nb-tbody'); if (data.items.length === 0) tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:#999; padding:50px;">空空如也</td></tr>`; else tbody.innerHTML = data.items.map(item => `<tr><td style="font-weight:bold; color:#333;">${item.text}</td><td style="line-height:1.6; color:#555;">${item.explanation}</td><td><span class="type-tag ${item.type === 'word' ? 'type-word' : 'type-sentence'}">${item.type === 'word' ? '单词' : '句子'}</span></td><td style="color:#aaa; font-size:12px;">${item.created_at.substring(0, 10)}</td><td><button class="btn-del-word" onclick="deleteSingleWord(${item.id}, this)">🗑️</button></td></tr>`).join('');
