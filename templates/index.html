@@ -1429,14 +1429,19 @@
                     const res = await fetch('/reset_book_progress', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ book_id: bookId })
+                        body: JSON.stringify({ book_id: bookId }),
+                        credentials: 'same-origin'
                     });
+                    if (res.status === 401) {
+                        alert("登录已过期，请重新登录");
+                        window.location.href = '/login';
+                        return;
+                    }
                     const data = await res.json();
                     if (data.status === 'success') {
                         document.querySelectorAll('.active-word').forEach(el => el.classList.remove('active-word'));
                         updateSidebarStats();
                         alert("✅ 已重置！");
-                        // 重新加载页面以彻底清除所有状态
                         window.location.href = '/?book_id=' + bookId;
                     } else {
                         alert("❌ 重置失败: " + (data.message || '未知错误'));

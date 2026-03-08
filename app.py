@@ -87,13 +87,39 @@ def get_data_dir():
 
 app = Flask(__name__, template_folder=get_resource_path('templates'))
 
-# 从环境变量获取 secret key，或生成随机的
-app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+# 从环境变量获取 secret key，或使用持久化的密钥（避免重启后 session 失效）
+def _get_or_create_secret_key():
+    env_key = os.environ.get('SECRET_KEY')
+    if env_key:
+        return env_key
+    key_file = os.path.join(get_data_dir(), '.secret_key')
+    if os.path.exists(key_file):
+        with open(key_file, 'r') as f:
+            return f.read().strip()
+    new_key = secrets.token_hex(32)
+    try:
+        with open(key_file, 'w') as f:
+            f.write(new_key)
+    except Exception:
+        pass
+    return new_key
+
+app.secret_key = _get_or_create_secret_key()
 
 @app.errorhandler(Exception)
 def handle_exception(e):
     logging.error(traceback.format_exc())
     return jsonify({'error': str(e)}), 500
+
+# 加载 .env 文件
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+if os.path.exists(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith('#') and '=' in _line:
+                _key, _val = _line.split('=', 1)
+                os.environ.setdefault(_key.strip(), _val.strip())
 
 # 配置
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
@@ -670,7 +696,8 @@ def ask_ai():
             cn = text
         cn = str(html_escape(cn))
         
-        # 尝试获取英文定义（带词形还原）
+        # 尝试获取英文定义（多级回退：WordNet -> Free Dictionary API -> DeepSeek）
+        phonetic = ""
         try:
             lookup_word = text.lower()
             syns = wordnet.synsets(lookup_word)
@@ -686,13 +713,28 @@ def ask_ai():
             
             if syns:
                 en = syns[0].definition().capitalize() + "."
-            elif DEEPSEEK_API_KEY:
-                en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
             else:
-                en = ""
+                # WordNet 无结果，尝试免费词典 API（内部自动尝试词形还原）
+                free_def, phonetic_text = lookup_free_dictionary(lookup_word)
+                if free_def:
+                    en = free_def.capitalize()
+                    if not en.endswith('.'):
+                        en += "."
+                    if phonetic_text:
+                        phonetic = phonetic_text
+                elif DEEPSEEK_API_KEY:
+                    en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
+                else:
+                    en = ""
         except Exception as e:
             logging.error(f"词典查询失败: {e}")
-            en = ""
+            if DEEPSEEK_API_KEY:
+                try:
+                    en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
+                except Exception:
+                    en = ""
+            else:
+                en = ""
         en = str(html_escape(en))
 
         # 包装英文定义中的单词（在转义之后安全地添加 HTML 标签）
@@ -701,7 +743,8 @@ def ask_ai():
         if en:
             en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
         
-        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
+        phonetic_html = f"<div style='font-size:13px;color:#888;margin-top:2px'>{html_escape(phonetic)}</div>" if phonetic else ""
+        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div>{phonetic_html}<div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
     else:
         res = call_deepseek(f"Translate and Analyze: {text}", 500)
         if not res:
