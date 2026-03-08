@@ -112,17 +112,26 @@ def handle_exception(e):
     return jsonify({'error': str(e)}), 500
 
 # 加载 .env 文件
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-if os.path.exists(_env_path):
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith('#') and '=' in _line:
-                _key, _val = _line.split('=', 1)
-                os.environ.setdefault(_key.strip(), _val.strip())
+_env_loaded = {}
+for _try_path in [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
+    os.path.join(os.getcwd(), '.env'),
+]:
+    if os.path.exists(_try_path):
+        logging.info(f"加载 .env 文件: {_try_path}")
+        with open(_try_path) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith('#') and '=' in _line:
+                    _key, _val = _line.split('=', 1)
+                    _key, _val = _key.strip(), _val.strip()
+                    os.environ[_key] = _val  # 强制覆盖，确保 .env 中的值生效
+                    _env_loaded[_key] = _val
+        break
 
 # 配置
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+logging.info(f"DEEPSEEK_API_KEY 状态: {'已设置 (' + DEEPSEEK_API_KEY[:8] + '...)' if DEEPSEEK_API_KEY else '未设置'}")
 if not DEEPSEEK_API_KEY:
     logging.warning("⚠️ DEEPSEEK_API_KEY 未设置，AI 翻译功能将不可用。请设置环境变量 DEEPSEEK_API_KEY")
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
