@@ -95,16 +95,6 @@ def handle_exception(e):
     logging.error(traceback.format_exc())
     return jsonify({'error': str(e)}), 500
 
-# 加载 .env 文件
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-if os.path.exists(_env_path):
-    with open(_env_path) as _f:
-        for _line in _f:
-            _line = _line.strip()
-            if _line and not _line.startswith('#') and '=' in _line:
-                _key, _val = _line.split('=', 1)
-                os.environ.setdefault(_key.strip(), _val.strip())
-
 # 配置
 DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
 if not DEEPSEEK_API_KEY:
@@ -331,40 +321,6 @@ def analyze_vocabulary_task(bid, text, user_id):
     conn.commit()
     conn.close()
     recalculate_chain(user_id)
-
-def lookup_free_dictionary(word):
-    """使用免费词典 API 查询单词释义（无需 API key）"""
-    if not HAS_REQUESTS:
-        return None, None
-    for attempt in range(2):
-        try:
-            resp = requests.get(
-                f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}",
-                timeout=8
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data and isinstance(data, list):
-                    entry = data[0]
-                    # 提取英文释义
-                    en_def = None
-                    for meaning in entry.get('meanings', []):
-                        defs = meaning.get('definitions', [])
-                        if defs:
-                            en_def = defs[0].get('definition', '')
-                            if en_def:
-                                break
-                    # 提取音标
-                    phonetic = entry.get('phonetic', '')
-                    return en_def, phonetic
-            return None, None  # 404 等非 200 状态码不重试
-        except requests.exceptions.Timeout:
-            if attempt == 0:
-                continue  # 超时重试一次
-        except Exception as e:
-            logging.error(f"Free Dictionary API 查询失败: {e}")
-            break
-    return None, None
 
 def call_deepseek(prompt, max_tokens=200):
     if not DEEPSEEK_API_KEY:
@@ -701,33 +657,24 @@ def ask_ai():
         cn = ""
         en = ""
         
-        # 尝试翻译（Google Translate -> DeepSeek 回退）
+        # 尝试翻译
         try:
             if HAS_TRANSLATOR:
                 cn = GoogleTranslator(source='auto', target='zh-CN').translate(text)
                 if not cn:
                     cn = text
-            elif DEEPSEEK_API_KEY:
-                cn = call_deepseek(f"Translate the English word '{text}' to Chinese. Only output the Chinese translation, nothing else.", 50) or text
             else:
                 cn = text
         except Exception as e:
             logging.error(f"翻译失败: {e}")
-            if DEEPSEEK_API_KEY:
-                try:
-                    cn = call_deepseek(f"Translate the English word '{text}' to Chinese. Only output the Chinese translation, nothing else.", 50) or text
-                except Exception:
-                    cn = text
-            else:
-                cn = text
+            cn = text
         cn = str(html_escape(cn))
         
-        # 尝试获取英文定义（多级回退：WordNet -> Free Dictionary API -> DeepSeek）
-        phonetic = ""
+        # 尝试获取英文定义（带词形还原）
         try:
             lookup_word = text.lower()
             syns = wordnet.synsets(lookup_word)
-
+            
             # 如果直接查不到，尝试词形还原后再查
             if not syns and lemmatizer:
                 for pos in ['v', 'n', 'a', 'r']:
@@ -736,22 +683,13 @@ def ask_ai():
                         syns = wordnet.synsets(lemma)
                         if syns:
                             break
-
+            
             if syns:
                 en = syns[0].definition().capitalize() + "."
+            elif DEEPSEEK_API_KEY:
+                en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
             else:
-                # WordNet 无结果，尝试免费词典 API
-                free_def, phonetic_text = lookup_free_dictionary(lookup_word)
-                if free_def:
-                    en = free_def.capitalize()
-                    if not en.endswith('.'):
-                        en += "."
-                    if phonetic_text:
-                        phonetic = phonetic_text
-                elif DEEPSEEK_API_KEY:
-                    en = call_deepseek(f"Give a brief English definition of the word '{text}' in one sentence. Only output the definition, nothing else.", 100) or ""
-                else:
-                    en = ""
+                en = ""
         except Exception as e:
             logging.error(f"词典查询失败: {e}")
             en = ""
@@ -763,8 +701,7 @@ def ask_ai():
         if en:
             en = re.sub(r'\b[a-zA-Z]{3,}\b', wrap, en)
         
-        phonetic_html = f"<div style='font-size:13px;color:#888;margin-top:2px'>{html_escape(phonetic)}</div>" if phonetic else ""
-        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div>{phonetic_html}<div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
+        res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
     else:
         res = call_deepseek(f"Translate and Analyze: {text}", 500)
         if not res:

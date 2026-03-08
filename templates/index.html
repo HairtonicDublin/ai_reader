@@ -1425,7 +1425,26 @@
             async function resetBook() {
                 if (!bookId || bookId == "0") return;
                 if (!confirm("⚠️ 确定要清空本书数据吗？(删除记录、高亮、重置进度)")) return;
-                try { const res = await fetch('/reset_book_progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId }) }); const data = await res.json(); if (data.status === 'success') { document.querySelectorAll('.active-word').forEach(el => el.classList.remove('active-word')); updateSidebarStats(); alert("✅ 已重置！"); } } catch (e) { }
+                try {
+                    const res = await fetch('/reset_book_progress', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ book_id: bookId })
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success') {
+                        document.querySelectorAll('.active-word').forEach(el => el.classList.remove('active-word'));
+                        updateSidebarStats();
+                        alert("✅ 已重置！");
+                        // 重新加载页面以彻底清除所有状态
+                        window.location.href = '/?book_id=' + bookId;
+                    } else {
+                        alert("❌ 重置失败: " + (data.message || '未知错误'));
+                    }
+                } catch (e) {
+                    console.error('Reset error:', e);
+                    alert("❌ 重置失败，请检查网络连接");
+                }
             }
             async function updateSidebarStats() {
                 if (!bookId || bookId == "0") return;
