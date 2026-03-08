@@ -666,17 +666,6 @@ def ask_ai():
     
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
-    
-    # 先查找已有的解释
-    if mode == 'word':
-        if wid:
-            c.execute("SELECT explanation FROM notebook WHERE user_id=? AND book_id=? AND word_index=?", (user_id, bid, wid))
-        else:
-            c.execute("SELECT explanation FROM notebook WHERE user_id=? AND text=? ORDER BY created_at DESC LIMIT 1", (user_id, text))
-        row = c.fetchone()
-        if row and row[0]:
-            conn.close()
-            return jsonify({'result': row[0]})
 
     res = ""
     if mode == 'word':
@@ -752,16 +741,20 @@ def ask_ai():
             res = "无法获取解释"
         res = str(html_escape(res))
 
-    # 保存到生词本（避免重复插入）
+    # 保存到生词本（已有则更新释义，没有则插入）
     try:
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        existing_id = None
         if mode == 'word' and wid is not None:
             c.execute("SELECT id FROM notebook WHERE user_id=? AND book_id=? AND word_index=?", (user_id, bid, wid))
-            if not c.fetchone():
-                c.execute("INSERT INTO notebook (user_id, text, explanation, type, book_id, word_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                          (user_id, text, res, mode, bid, wid, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+            row = c.fetchone()
+            if row:
+                existing_id = row[0]
+        if existing_id:
+            c.execute("UPDATE notebook SET explanation=?, created_at=? WHERE id=?", (res, now_str, existing_id))
         else:
             c.execute("INSERT INTO notebook (user_id, text, explanation, type, book_id, word_index, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                      (user_id, text, res, mode, bid, wid, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                      (user_id, text, res, mode, bid, wid, now_str))
         conn.commit()
     except Exception as e:
         logging.error(f"保存生词失败: {e}")
