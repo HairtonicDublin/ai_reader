@@ -786,17 +786,25 @@ def delete_book():
 def reset_book_progress():
     user_id = get_current_user_id()
     book_id = request.json.get('book_id')
+    if not book_id:
+        return jsonify({'status': 'error', 'message': '缺少 book_id'}), 400
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
     try:
+        # 彻底清除：删除该书所有查词记录、高亮、复习进度
         c.execute("DELETE FROM notebook WHERE book_id = ? AND user_id = ?", (book_id, user_id))
+        # 重置用户词汇量统计
         c.execute("UPDATE user_settings SET value = '0' WHERE user_id = ? AND key = 'vocab_size'", (user_id,))
+        # 重置该书的词汇统计数据
+        c.execute("UPDATE books SET total_vocab = 0, new_vocab = 0, cumulative_vocab = 0 WHERE id = ? AND user_id = ?", (book_id, user_id))
         conn.commit()
+        conn.close()
+        # 重新计算词汇统计链
+        recalculate_chain(user_id)
         return jsonify({'status': 'success'})
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-    finally:
         conn.close()
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/get_stats', methods=['POST'])
 @login_required
