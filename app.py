@@ -238,9 +238,44 @@ def init_db():
         cumulative_vocab INTEGER DEFAULT 0,
         word_count INTEGER DEFAULT 0,
         folder_id INTEGER DEFAULT 0,
+        source_type TEXT DEFAULT 'upload',
+        author TEXT,
+        chapters TEXT,
+        file_format TEXT,
+        page_count INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
         UNIQUE(user_id, title)
+    )''')
+
+    # 兼容旧 books 表：逐列添加新字段
+    for col, col_type, default in [
+        ('source_type', 'TEXT', "'upload'"),
+        ('author', 'TEXT', None),
+        ('chapters', 'TEXT', None),
+        ('file_format', 'TEXT', None),
+        ('page_count', 'INTEGER', '0'),
+    ]:
+        try:
+            if default is not None:
+                c.execute(f"ALTER TABLE books ADD COLUMN {col} {col_type} DEFAULT {default}")
+            else:
+                c.execute(f"ALTER TABLE books ADD COLUMN {col} {col_type}")
+        except:
+            pass
+
+    # 样书库表（公版书籍，全局共享）
+    c.execute('''CREATE TABLE IF NOT EXISTS sample_books (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT UNIQUE NOT NULL,
+        author TEXT,
+        description TEXT,
+        content TEXT,
+        difficulty TEXT DEFAULT 'intermediate',
+        category TEXT,
+        word_count INTEGER DEFAULT 0,
+        cover_emoji TEXT DEFAULT '📖',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     
     # 文件夹表
@@ -446,32 +481,505 @@ def clean_block_text(text):
     text = text.replace('\n', ' ').strip()
     return re.sub(r'\s+', ' ', text)
 
-def extract_book_smart(path):
+def is_header_footer(text):
+    """判断文本是否是页眉页脚（页码、章节标题重复等）"""
+    text = text.strip()
+    # 纯数字（页码）
+    if re.match(r'^\d{1,4}$', text):
+        return True
+    # 常见页眉页脚模式
+    if re.match(r'^(page|第)\s*\d+\s*(页|of|/)\s*\d*', text, re.IGNORECASE):
+        return True
+    # 版权声明等短文本
+    if len(text) < 5:
+        return True
+    # 全大写且很短的标题重复（页眉）
+    if text.isupper() and len(text) < 50:
+        return True
+    return False
+
+def extract_pdf_chapters(doc):
+    """从 PDF 目录（TOC）提取章节信息，无内嵌目录时自动检测"""
+    chapters = []
+    # 第一优先：使用 PDF 内嵌目录
+    try:
+        toc = doc.get_toc()
+        for level, title, page in toc:
+            chapters.append({
+                'level': level,
+                'title': title.strip(),
+                'page': page
+            })
+    except:
+        pass
+
+    if chapters:
+        return chapters
+
+    # 第二优先：通过字体大小和文本模式自动检测章节标题
+    chapters = auto_detect_pdf_chapters(doc)
+    return chapters
+
+def auto_detect_pdf_chapters(doc):
+    """当 PDF 无内嵌目录时，通过字体大小和文本模式自动检测章节"""
+    chapters = []
+    # 章节标题的正则模式（中英文）
+    chapter_patterns = [
+        re.compile(r'^(chapter|chap\.?)\s+(\d+|[ivxlcdm]+)', re.IGNORECASE),
+        re.compile(r'^(part|section)\s+(\d+|[ivxlcdm]+)', re.IGNORECASE),
+        re.compile(r'^第[一二三四五六七八九十百千\d]+[章节篇部回卷]', re.IGNORECASE),
+        re.compile(r'^\d+[\.\)]\s+[A-Z\u4e00-\u9fff]'),  # "1. Title" 或 "1) 标题"
+    ]
+
+    # 收集所有页面中的文本块及其字体信息
+    all_spans = []
+    for page_idx, page in enumerate(doc):
+        try:
+            blocks = page.get_text("dict", flags=0)["blocks"]
+        except Exception:
+            continue
+        for block in blocks:
+            if block.get("type", 0) != 0:  # 非文本块
+                continue
+            for line in block.get("lines", []):
+                line_text = ""
+                max_size = 0
+                is_bold = False
+                for span in line.get("spans", []):
+                    line_text += span.get("text", "")
+                    size = span.get("size", 0)
+                    if size > max_size:
+                        max_size = size
+                    flags = span.get("flags", 0)
+                    if flags & 2 ** 4:  # bold flag
+                        is_bold = True
+                line_text = line_text.strip()
+                if line_text and max_size > 0:
+                    all_spans.append({
+                        'text': line_text,
+                        'size': max_size,
+                        'bold': is_bold,
+                        'page': page_idx + 1
+                    })
+
+    if not all_spans:
+        return chapters
+
+    # 计算正文的常见字体大小（众数）
+    size_counts = {}
+    for s in all_spans:
+        rounded = round(s['size'], 1)
+        size_counts[rounded] = size_counts.get(rounded, 0) + 1
+    body_size = max(size_counts, key=size_counts.get) if size_counts else 12
+    # 标题阈值：比正文大 20% 以上
+    title_size_threshold = body_size * 1.2
+
+    seen_pages = set()
+    for s in all_spans:
+        text = s['text']
+        is_title = False
+        level = 1
+
+        # 方法1：字体大小显著大于正文
+        if s['size'] >= title_size_threshold and len(text) < 100:
+            is_title = True
+            if s['size'] >= body_size * 1.6:
+                level = 1  # 大标题
+            else:
+                level = 2  # 小标题
+
+        # 方法2：匹配章节模式
+        if not is_title:
+            for pattern in chapter_patterns:
+                if pattern.match(text):
+                    is_title = True
+                    level = 1
+                    break
+
+        # 方法3：粗体 + 短文本（可能是小节标题）
+        if not is_title and s['bold'] and len(text) < 80 and s['size'] >= body_size:
+            # 只有在文本看起来像标题时才标记（非纯数字、非太短）
+            if len(text) > 3 and not re.match(r'^\d+$', text):
+                is_title = True
+                level = 2
+
+        if is_title:
+            # 避免同一页重复添加（大标题优先）
+            page_key = (s['page'], text[:30])
+            if page_key not in seen_pages:
+                seen_pages.add(page_key)
+                chapters.append({
+                    'level': level,
+                    'title': text[:120],
+                    'page': s['page']
+                })
+
+    # 如果检测到的章节太多（可能误判），只保留 level 1
+    if len(chapters) > 80:
+        chapters = [c for c in chapters if c['level'] == 1]
+
+    # 如果还是太多，放弃自动检测
+    if len(chapters) > 100:
+        return []
+
+    return chapters
+
+def extract_pdf_smart(path):
+    """增强版 PDF 提取：过滤页眉页脚、提取目录、支持 OCR"""
     try:
         import fitz
         doc = fitz.open(path)
-        text = []
-        for p in doc:
-            blocks = p.get_text("blocks")
-            for b in blocks:
-                if b[6] == 1:
-                    continue
-                raw = clean_block_text(b[4])
-                if len(raw) > 3:
-                    text.append(raw)
-        return "\n\n".join(text)
-    except Exception as e:
-        return f"文件读取失败: {str(e)}"
+        total_pages = len(doc)
+        chapters = extract_pdf_chapters(doc)
 
-def register_book(name, user_id):
+        all_text = []
+        # 第一遍：收集所有块的位置信息，用于检测页眉页脚区域
+        page_heights = []
+        for p in doc:
+            rect = p.rect
+            page_heights.append(rect.height)
+
+        for page_idx, p in enumerate(doc):
+            page_height = page_heights[page_idx] if page_idx < len(page_heights) else 800
+            header_zone = page_height * 0.08  # 顶部 8% 为页眉区域
+            footer_zone = page_height * 0.92  # 底部 8% 为页脚区域
+
+            blocks = p.get_text("blocks")
+            page_text = []
+
+            for b in blocks:
+                # b = (x0, y0, x1, y1, text, block_no, block_type)
+                if b[6] == 1:  # 图片块跳过
+                    continue
+
+                y_top = b[1]
+                y_bottom = b[3]
+                raw = clean_block_text(b[4])
+
+                # 过滤页眉页脚区域
+                if y_top < header_zone and len(raw) < 60:
+                    continue
+                if y_bottom > footer_zone and len(raw) < 60:
+                    continue
+
+                # 过滤明显的页眉页脚内容
+                if is_header_footer(raw):
+                    continue
+
+                if len(raw) > 3:
+                    page_text.append(raw)
+
+            if page_text:
+                all_text.append('\n'.join(page_text))
+
+        text = '\n\n'.join(all_text)
+
+        # 如果提取到的文本太少，尝试 OCR（扫描版 PDF）
+        if len(text.split()) < 50 and total_pages > 0:
+            ocr_text = extract_pdf_ocr(doc)
+            if ocr_text and len(ocr_text.split()) > len(text.split()):
+                text = ocr_text
+                logging.info(f"PDF OCR 提取成功: {len(text)} 字符")
+
+        # 提取作者信息
+        author = ''
+        try:
+            metadata = doc.metadata
+            if metadata:
+                author = metadata.get('author', '') or ''
+        except:
+            pass
+
+        doc.close()
+        return {
+            'text': text,
+            'chapters': chapters,
+            'page_count': total_pages,
+            'author': author,
+            'format': 'pdf'
+        }
+    except Exception as e:
+        logging.error(f"PDF 提取失败: {e}")
+        return {'text': f"PDF 读取失败: {str(e)}", 'chapters': [], 'page_count': 0, 'author': '', 'format': 'pdf'}
+
+def preprocess_image_for_ocr(img):
+    """对图片进行预处理以提高 OCR 识别率"""
+    try:
+        from PIL import ImageFilter, ImageOps
+        # 转为灰度
+        img = img.convert('L')
+        # 增强对比度（自适应直方图均衡）
+        img = ImageOps.autocontrast(img, cutoff=2)
+        # 轻微锐化
+        img = img.filter(ImageFilter.SHARPEN)
+        # 二值化（大津阈值近似）
+        threshold = 128
+        img = img.point(lambda x: 255 if x > threshold else 0, '1')
+        img = img.convert('L')
+        return img
+    except Exception:
+        return img
+
+def extract_pdf_ocr(doc):
+    """对扫描版 PDF 进行 OCR 识别，支持多引擎回退"""
+    ocr_texts = []
+    max_pages = min(len(doc), 100)
+    ocr_engine = None  # 'pymupdf', 'pytesseract', or None
+
+    # 检测可用的 OCR 引擎：优先尝试 PyMuPDF 内置 OCR
+    if len(doc) > 0:
+        try:
+            test_page = doc[0]
+            tp = test_page.get_textpage_ocr(flags=0, language='eng', dpi=200)
+            ocr_engine = 'pymupdf'
+            logging.info("使用 PyMuPDF 内置 OCR 引擎")
+        except Exception:
+            pass
+
+    if not ocr_engine:
+        try:
+            from PIL import Image
+            import pytesseract
+            # 快速测试 pytesseract 是否可用
+            pytesseract.get_tesseract_version()
+            ocr_engine = 'pytesseract'
+            logging.info("使用 pytesseract OCR 引擎")
+        except Exception:
+            pass
+
+    if not ocr_engine:
+        logging.info("OCR 不可用：需要安装 pytesseract 和 Tesseract-OCR，或使用支持 OCR 的 PyMuPDF 版本")
+        return ''
+
+    try:
+        for page_idx in range(max_pages):
+            page = doc[page_idx]
+            text = ''
+
+            if ocr_engine == 'pymupdf':
+                try:
+                    tp = page.get_textpage_ocr(flags=0, language='eng', dpi=200)
+                    text = page.get_text("text", textpage=tp).strip()
+                except Exception as e:
+                    logging.warning(f"PyMuPDF OCR 第 {page_idx + 1} 页失败: {e}")
+
+            if ocr_engine == 'pytesseract' or (ocr_engine == 'pymupdf' and not text):
+                try:
+                    from PIL import Image
+                    import pytesseract
+                    import io
+                    pix = page.get_pixmap(dpi=200)
+                    img_bytes = pix.tobytes("png")
+                    img = Image.open(io.BytesIO(img_bytes))
+                    # 图片预处理提高识别率
+                    img = preprocess_image_for_ocr(img)
+                    # 同时尝试中英文识别
+                    try:
+                        text = pytesseract.image_to_string(img, lang='eng+chi_sim')
+                    except Exception:
+                        text = pytesseract.image_to_string(img, lang='eng')
+                    text = text.strip()
+                except ImportError:
+                    logging.info("OCR 需要安装 pytesseract 和 Pillow: pip install pytesseract Pillow")
+                    return ''
+                except Exception as e:
+                    logging.warning(f"pytesseract OCR 第 {page_idx + 1} 页失败: {e}")
+                    continue
+
+            if text:
+                # 清理 OCR 结果中的常见噪点
+                text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+                text = re.sub(r'\n{3,}', '\n\n', text)
+                ocr_texts.append(text)
+
+        if max_pages < len(doc):
+            ocr_texts.append(f"\n[... 仅 OCR 了前 {max_pages} 页，共 {len(doc)} 页 ...]")
+
+        return '\n\n'.join(ocr_texts)
+    except Exception as e:
+        logging.error(f"OCR 失败: {e}")
+        return ''
+
+def extract_epub(path):
+    """解析 EPUB 文件，提取正文和章节"""
+    try:
+        import zipfile
+        from xml.etree import ElementTree as ET
+
+        chapters = []
+        all_text = []
+
+        with zipfile.ZipFile(path, 'r') as zf:
+            # 找到 content.opf
+            container_xml = zf.read('META-INF/container.xml')
+            container_tree = ET.fromstring(container_xml)
+            ns = {'c': 'urn:oasis:names:tc:opendocument:xmlns:container'}
+            rootfile = container_tree.find('.//c:rootfile', ns)
+            if rootfile is None:
+                # 尝试无命名空间
+                rootfile = container_tree.find('.//{urn:oasis:names:tc:opendocument:xmlns:container}rootfile')
+            if rootfile is None:
+                return {'text': 'EPUB 格式无法识别', 'chapters': [], 'page_count': 0, 'author': '', 'format': 'epub'}
+
+            opf_path = rootfile.get('full-path')
+            opf_dir = '/'.join(opf_path.split('/')[:-1])
+            opf_data = zf.read(opf_path)
+            opf_tree = ET.fromstring(opf_data)
+
+            # 提取元数据
+            author = ''
+            dc_ns = 'http://purl.org/dc/elements/1.1/'
+            opf_ns = 'http://www.idpf.org/2007/opf'
+            creator_el = opf_tree.find(f'.//{{{dc_ns}}}creator')
+            if creator_el is not None and creator_el.text:
+                author = creator_el.text.strip()
+
+            # 提取阅读顺序
+            spine = opf_tree.find(f'{{{opf_ns}}}spine')
+            if spine is None:
+                spine = opf_tree.find('.//spine')
+            manifest = opf_tree.find(f'{{{opf_ns}}}manifest')
+            if manifest is None:
+                manifest = opf_tree.find('.//manifest')
+
+            # 构建 id -> href 映射
+            id_to_href = {}
+            if manifest is not None:
+                for item in manifest:
+                    item_id = item.get('id', '')
+                    item_href = item.get('href', '')
+                    media = item.get('media-type', '')
+                    if 'html' in media or 'xhtml' in media:
+                        id_to_href[item_id] = item_href
+
+            # 按 spine 顺序读取章节
+            if spine is not None:
+                for itemref in spine:
+                    idref = itemref.get('idref', '')
+                    href = id_to_href.get(idref, '')
+                    if not href:
+                        continue
+
+                    full_path = f"{opf_dir}/{href}" if opf_dir else href
+                    try:
+                        html_data = zf.read(full_path)
+                    except KeyError:
+                        # 尝试不带目录前缀
+                        try:
+                            html_data = zf.read(href)
+                        except KeyError:
+                            continue
+
+                    html_str_raw = html_data.decode('utf-8', errors='ignore')
+                    # 从 HTML/XHTML 提取纯文本
+                    chapter_text = extract_text_from_html(html_str_raw)
+                    if chapter_text.strip():
+                        # 优先从 h1/h2/h3 标签提取章节标题
+                        title = extract_heading_from_html(html_str_raw)
+                        if not title:
+                            lines = chapter_text.strip().split('\n')
+                            title = lines[0][:80] if lines else f'Chapter {len(chapters) + 1}'
+                        chapters.append({
+                            'level': 1,
+                            'title': title,
+                            'page': len(chapters) + 1
+                        })
+                        all_text.append(chapter_text.strip())
+
+        text = '\n\n'.join(all_text)
+        return {
+            'text': text,
+            'chapters': chapters,
+            'page_count': len(chapters),
+            'author': author,
+            'format': 'epub'
+        }
+    except Exception as e:
+        logging.error(f"EPUB 解析失败: {e}")
+        return {'text': f"EPUB 读取失败: {str(e)}", 'chapters': [], 'page_count': 0, 'author': '', 'format': 'epub'}
+
+def extract_heading_from_html(html_str):
+    """从 HTML 中提取 h1/h2/h3 标签作为章节标题"""
+    for tag in ['h1', 'h2', 'h3']:
+        match = re.search(rf'<{tag}[^>]*>(.*?)</{tag}>', html_str, re.DOTALL | re.IGNORECASE)
+        if match:
+            # 去除内部 HTML 标签
+            text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
+            if text and len(text) > 1:
+                return text[:120]
+    # 尝试匹配带 class 含 title/heading 的元素
+    match = re.search(r'<[^>]+class="[^"]*(?:title|heading|chapter)[^"]*"[^>]*>(.*?)</\w+>', html_str, re.DOTALL | re.IGNORECASE)
+    if match:
+        text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
+        if text and len(text) > 1:
+            return text[:120]
+    return ''
+
+def extract_text_from_html(html_str):
+    """从 HTML/XHTML 中提取纯文本，过滤标签"""
+    # 移除 script 和 style
+    html_str = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html_str, flags=re.DOTALL | re.IGNORECASE)
+    # 段落和换行转换
+    html_str = re.sub(r'<br\s*/?>', '\n', html_str, flags=re.IGNORECASE)
+    html_str = re.sub(r'</(p|div|h[1-6]|li|tr)>', '\n', html_str, flags=re.IGNORECASE)
+    # 移除所有 HTML 标签
+    text = re.sub(r'<[^>]+>', '', html_str)
+    # 清理 HTML 实体
+    text = re.sub(r'&nbsp;', ' ', text)
+    text = re.sub(r'&amp;', '&', text)
+    text = re.sub(r'&lt;', '<', text)
+    text = re.sub(r'&gt;', '>', text)
+    text = re.sub(r'&quot;', '"', text)
+    text = re.sub(r'&#\d+;', '', text)
+    # 清理多余空行
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+def extract_book_smart(path):
+    """统一入口：根据文件格式选择提取方式"""
+    ext = path.lower()
+    if ext.endswith('.epub'):
+        return extract_epub(path)
+    elif ext.endswith('.pdf'):
+        return extract_pdf_smart(path)
+    elif ext.endswith('.txt') or ext.endswith('.md'):
+        try:
+            for enc in ['utf-8', 'gb18030', 'latin-1']:
+                try:
+                    with open(path, 'r', encoding=enc) as f:
+                        text = f.read()
+                    return {'text': text, 'chapters': [], 'page_count': 0, 'author': '', 'format': 'txt'}
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read()
+            return {'text': text, 'chapters': [], 'page_count': 0, 'author': '', 'format': 'txt'}
+        except Exception as e:
+            return {'text': f"文件读取失败: {str(e)}", 'chapters': [], 'page_count': 0, 'author': '', 'format': 'txt'}
+    else:
+        # 尝试作为文本读取
+        try:
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                text = f.read()
+            return {'text': text, 'chapters': [], 'page_count': 0, 'author': '', 'format': os.path.splitext(path)[1]}
+        except Exception as e:
+            return {'text': f"不支持的格式: {str(e)}", 'chapters': [], 'page_count': 0, 'author': '', 'format': 'unknown'}
+
+def register_book(name, user_id, source_type='upload', author='', chapters=None, file_format='', page_count=0):
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
+    chapters_json = json_module.dumps(chapters, ensure_ascii=False) if chapters else None
     try:
-        c.execute("INSERT INTO books (user_id, title) VALUES (?, ?)", (user_id, name))
+        c.execute("""INSERT INTO books (user_id, title, source_type, author, chapters, file_format, page_count)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, name, source_type, author, chapters_json, file_format, page_count))
         bid = c.lastrowid
     except:
         c.execute("SELECT id FROM books WHERE user_id = ? AND title = ?", (user_id, name))
         bid = c.fetchone()[0]
+        # 更新元数据
+        c.execute("UPDATE books SET source_type=?, author=?, chapters=?, file_format=?, page_count=? WHERE id=?",
+                  (source_type, author, chapters_json, file_format, page_count, bid))
     conn.commit()
     conn.close()
     return bid
@@ -936,6 +1444,45 @@ def reset_password():
     return jsonify({'status': 'success', 'message': '密码重置成功，请使用新密码登录'})
 
 # ============================================
+# 📖 章节导航
+# ============================================
+
+@app.route('/api/book_chapters/<int:book_id>')
+@login_required
+def get_book_chapters(book_id):
+    """获取指定书籍的章节列表"""
+    user_id = session['user_id']
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("SELECT chapters, title, author, page_count, file_format FROM books WHERE id = ? AND user_id = ?",
+              (book_id, user_id))
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({'status': 'error', 'message': '书籍不存在'}), 404
+
+    chapters_json, title, author, page_count, file_format = row
+    chapters = []
+    if chapters_json:
+        try:
+            chapters = json_module.loads(chapters_json)
+        except Exception:
+            pass
+
+    return jsonify({
+        'status': 'success',
+        'book': {
+            'id': book_id,
+            'title': title,
+            'author': author or '',
+            'page_count': page_count or 0,
+            'format': file_format or ''
+        },
+        'chapters': chapters
+    })
+
+# ============================================
 # 📤 数据导出
 # ============================================
 
@@ -1145,25 +1692,20 @@ def index():
 
             path = os.path.join(user_upload_folder, safe_name)
             f.save(path)
-            # 用原始文件名作为显示标题，安全文件名用于存储
             display_name = f.filename
-            bid = register_book(display_name, user_id)
             title = display_name
 
-            ext = safe_name.lower()
-            if ext.endswith(('.pdf', '.epub', '.mobi')):
-                content = extract_book_smart(path)
-            else:
-                try:
-                    with open(path, 'r', encoding='utf-8') as fh:
-                        content = fh.read()
-                except Exception:
-                    try:
-                        with open(path, 'r', encoding='gb18030') as fh:
-                            content = fh.read()
-                    except Exception:
-                        with open(path, 'r', encoding='utf-8', errors='ignore') as fh:
-                            content = fh.read()
+            # 统一使用 extract_book_smart，返回 dict
+            result = extract_book_smart(path)
+            content = result['text']
+            bid = register_book(
+                display_name, user_id,
+                source_type='upload',
+                author=result.get('author', ''),
+                chapters=result.get('chapters'),
+                file_format=result.get('format', ''),
+                page_count=result.get('page_count', 0)
+            )
 
             threading.Thread(target=analyze_vocabulary_task, args=(bid, content, user_id), daemon=True).start()
             
