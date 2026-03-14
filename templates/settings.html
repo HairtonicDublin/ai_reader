@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Reader - 账户设置</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #f5f5f7;
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header h1 { font-size: 22px; }
+
+        .header a {
+            color: white;
+            text-decoration: none;
+            font-size: 14px;
+            opacity: 0.9;
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+
+        .header a:hover { background: rgba(255,255,255,0.15); }
+
+        .container {
+            max-width: 700px;
+            margin: 30px auto;
+            padding: 0 20px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 28px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+        }
+
+        .card h2 {
+            font-size: 18px;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+            color: #333;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .info-row:last-child { border-bottom: none; }
+
+        .info-label {
+            font-size: 14px;
+            color: #888;
+            min-width: 80px;
+        }
+
+        .info-value {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 6px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .form-group input:focus { border-color: #667eea; }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102,126,234,0.4);
+        }
+
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #219a52;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #c0392b;
+        }
+
+        .btn-outline {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .btn-outline:hover:not(:disabled) {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+        }
+
+        .message {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: none;
+        }
+
+        .message.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
+            display: block;
+        }
+
+        .message.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+            display: block;
+        }
+
+        .guest-banner {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 20px 24px;
+            border-radius: 16px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .guest-banner h3 { margin-bottom: 8px; font-size: 16px; }
+        .guest-banner p { font-size: 13px; opacity: 0.9; margin-bottom: 16px; }
+
+        .danger-zone {
+            border: 2px solid #ffcdd2;
+            background: #fff5f5;
+        }
+
+        .danger-zone h2 {
+            color: #c62828;
+            border-bottom-color: #ffcdd2;
+        }
+
+        .export-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .export-card {
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .export-card:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+            transform: translateY(-2px);
+        }
+
+        .export-card .icon { font-size: 32px; margin-bottom: 8px; }
+        .export-card .title { font-size: 14px; font-weight: 600; color: #333; }
+        .export-card .desc { font-size: 12px; color: #888; margin-top: 4px; }
+
+        @media (max-width: 480px) {
+            .header { padding: 16px 20px; }
+            .container { margin: 16px auto; }
+            .card { padding: 20px; }
+            .export-options { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>账户设置</h1>
+        <a href="/">返回阅读</a>
+    </div>
+
+    <div class="container">
+        <!-- 游客升级提示 -->
+        <div id="guest-banner" class="guest-banner" style="display:none;">
+            <h3>你正在使用游客模式</h3>
+            <p>注册正式账户后可在多设备间同步数据，且数据永不丢失</p>
+            <button class="btn btn-primary" onclick="showConvertForm()">立即注册，保留数据</button>
+        </div>
+
+        <!-- 游客转正表单 -->
+        <div id="convert-card" class="card" style="display:none;">
+            <h2>升级为正式账户</h2>
+            <div id="convert-msg" class="message"></div>
+            <div class="form-group">
+                <label>设置用户名</label>
+                <input type="text" id="conv-username" placeholder="至少2个字符" minlength="2">
+            </div>
+            <div class="form-group">
+                <label>邮箱（可选）</label>
+                <input type="email" id="conv-email" placeholder="用于找回密码">
+            </div>
+            <div class="form-group">
+                <label>设置密码</label>
+                <input type="password" id="conv-password" placeholder="设置密码">
+            </div>
+            <div class="form-group">
+                <label>确认密码</label>
+                <input type="password" id="conv-password2" placeholder="再次输入密码">
+            </div>
+            <button class="btn btn-success" onclick="convertGuest()">确认注册</button>
+        </div>
+
+        <!-- 账户信息 -->
+        <div class="card">
+            <h2>账户信息</h2>
+            <div class="info-row">
+                <span class="info-label">用户名</span>
+                <span class="info-value" id="info-username">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">邮箱</span>
+                <span class="info-value" id="info-email">未设置</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">账户类型</span>
+                <span class="info-value" id="info-type">-</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">注册时间</span>
+                <span class="info-value" id="info-created">-</span>
+            </div>
+        </div>
+
+        <!-- 修改邮箱 -->
+        <div class="card" id="email-card">
+            <h2>修改邮箱</h2>
+            <div id="email-msg" class="message"></div>
+            <div class="form-group">
+                <label>新邮箱地址</label>
+                <input type="email" id="new-email" placeholder="输入新邮箱">
+            </div>
+            <button class="btn btn-primary" onclick="updateEmail()">保存</button>
+        </div>
+
+        <!-- 修改密码 -->
+        <div class="card" id="password-card">
+            <h2>修改密码</h2>
+            <div id="pw-msg" class="message"></div>
+            <div class="form-group">
+                <label>当前密码</label>
+                <input type="password" id="old-pw" placeholder="输入当前密码">
+            </div>
+            <div class="form-group">
+                <label>新密码</label>
+                <input type="password" id="new-pw" placeholder="至少4个字符" minlength="4">
+            </div>
+            <div class="form-group">
+                <label>确认新密码</label>
+                <input type="password" id="new-pw2" placeholder="再次输入新密码">
+            </div>
+            <button class="btn btn-primary" onclick="changePassword()">修改密码</button>
+        </div>
+
+        <!-- 数据导出 -->
+        <div class="card">
+            <h2>数据导出</h2>
+            <p style="font-size:13px;color:#888;margin-bottom:16px;">导出你的学习数据，可用于备份或迁移</p>
+            <div class="export-options">
+                <div class="export-card" onclick="exportData('all')">
+                    <div class="icon">📦</div>
+                    <div class="title">全部数据</div>
+                    <div class="desc">JSON 格式，含全部学习记录</div>
+                </div>
+                <div class="export-card" onclick="exportData('notebook')">
+                    <div class="icon">📝</div>
+                    <div class="title">生词本</div>
+                    <div class="desc">JSON 格式，含释义和复习记录</div>
+                </div>
+                <div class="export-card" onclick="exportData('report')">
+                    <div class="icon">📊</div>
+                    <div class="title">学习报告</div>
+                    <div class="desc">JSON 格式，含统计和活动记录</div>
+                </div>
+                <div class="export-card" onclick="exportCSV()">
+                    <div class="icon">📋</div>
+                    <div class="title">CSV 表格</div>
+                    <div class="desc">Excel 兼容，方便二次处理</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 危险操作 -->
+        <div class="card danger-zone">
+            <h2>危险操作</h2>
+            <p style="font-size:13px;color:#c62828;margin-bottom:16px;">以下操作不可恢复，请谨慎执行</p>
+            <div id="delete-msg" class="message"></div>
+            <div class="form-group" id="delete-pw-group">
+                <label>输入密码确认身份</label>
+                <input type="password" id="delete-pw" placeholder="输入当前密码">
+            </div>
+            <div class="form-group">
+                <label>输入 DELETE 确认删除</label>
+                <input type="text" id="delete-confirm" placeholder="输入 DELETE">
+            </div>
+            <button class="btn btn-danger" onclick="deleteAccount()">永久删除账户和全部数据</button>
+        </div>
+    </div>
+
+    <script>
+        let userInfo = {};
+
+        async function loadUserInfo() {
+            try {
+                const res = await fetch('/api/user_info');
+                userInfo = await res.json();
+
+                document.getElementById('info-username').textContent = userInfo.username || '-';
+                document.getElementById('info-email').textContent = userInfo.email || '未设置';
+                document.getElementById('info-created').textContent = userInfo.created_at ? userInfo.created_at.split(' ')[0] : '-';
+
+                if (userInfo.is_guest) {
+                    document.getElementById('info-type').textContent = '游客（试用中）';
+                    document.getElementById('guest-banner').style.display = 'block';
+                    // 游客不需要密码验证
+                    document.getElementById('password-card').style.display = 'none';
+                    document.getElementById('delete-pw-group').style.display = 'none';
+                } else if (userInfo.oauth_provider) {
+                    document.getElementById('info-type').textContent = 'Google 账户';
+                    document.getElementById('password-card').style.display = 'none';
+                    document.getElementById('delete-pw-group').style.display = 'none';
+                } else {
+                    document.getElementById('info-type').textContent = '正式账户';
+                }
+
+                if (userInfo.email) {
+                    document.getElementById('new-email').value = userInfo.email;
+                }
+            } catch (e) {
+                console.error('加载用户信息失败:', e);
+            }
+        }
+
+        function showConvertForm() {
+            document.getElementById('convert-card').style.display = 'block';
+            document.getElementById('guest-banner').style.display = 'none';
+            document.getElementById('conv-username').focus();
+        }
+
+        async function convertGuest() {
+            const username = document.getElementById('conv-username').value.trim();
+            const email = document.getElementById('conv-email').value.trim();
+            const password = document.getElementById('conv-password').value;
+            const password2 = document.getElementById('conv-password2').value;
+            const msgEl = document.getElementById('convert-msg');
+
+            if (!username || !password) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '请输入用户名和密码';
+                return;
+            }
+            if (password !== password2) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '两次输入的密码不一致';
+                return;
+            }
+
+            try {
+                const res = await fetch('/convert_guest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    msgEl.className = 'message success';
+                    msgEl.textContent = data.message;
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    msgEl.className = 'message error';
+                    msgEl.textContent = data.message;
+                }
+            } catch (e) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '网络错误';
+            }
+        }
+
+        async function updateEmail() {
+            const email = document.getElementById('new-email').value.trim();
+            const msgEl = document.getElementById('email-msg');
+
+            try {
+                const res = await fetch('/api/update_email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await res.json();
+                msgEl.className = data.status === 'success' ? 'message success' : 'message error';
+                msgEl.textContent = data.message;
+            } catch (e) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '网络错误';
+            }
+        }
+
+        async function changePassword() {
+            const oldPw = document.getElementById('old-pw').value;
+            const newPw = document.getElementById('new-pw').value;
+            const newPw2 = document.getElementById('new-pw2').value;
+            const msgEl = document.getElementById('pw-msg');
+
+            if (!oldPw || !newPw) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '请填写完整';
+                return;
+            }
+            if (newPw !== newPw2) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '两次输入的新密码不一致';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/change_password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ old_password: oldPw, new_password: newPw })
+                });
+                const data = await res.json();
+                msgEl.className = data.status === 'success' ? 'message success' : 'message error';
+                msgEl.textContent = data.message;
+                if (data.status === 'success') {
+                    document.getElementById('old-pw').value = '';
+                    document.getElementById('new-pw').value = '';
+                    document.getElementById('new-pw2').value = '';
+                }
+            } catch (e) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '网络错误';
+            }
+        }
+
+        function exportData(type) {
+            window.location.href = `/api/export_data?type=${type}`;
+        }
+
+        function exportCSV() {
+            window.location.href = '/api/export_csv';
+        }
+
+        async function deleteAccount() {
+            const confirm = document.getElementById('delete-confirm').value.trim();
+            const password = document.getElementById('delete-pw').value;
+            const msgEl = document.getElementById('delete-msg');
+
+            if (confirm !== 'DELETE') {
+                msgEl.className = 'message error';
+                msgEl.textContent = '请输入 DELETE 确认';
+                return;
+            }
+
+            if (!userInfo.is_guest && !userInfo.oauth_provider && !password) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '请输入密码确认身份';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/delete_account', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirm, password })
+                });
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    msgEl.className = 'message success';
+                    msgEl.textContent = data.message;
+                    setTimeout(() => { window.location.href = '/login'; }, 1500);
+                } else {
+                    msgEl.className = 'message error';
+                    msgEl.textContent = data.message;
+                }
+            } catch (e) {
+                msgEl.className = 'message error';
+                msgEl.textContent = '网络错误';
+            }
+        }
+
+        loadUserInfo();
+    </script>
+</body>
+</html>

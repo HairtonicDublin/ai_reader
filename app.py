@@ -10,7 +10,8 @@ import secrets
 from datetime import datetime, timedelta
 from functools import wraps
 from markupsafe import escape as html_escape
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+import json as json_module
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -203,9 +204,28 @@ def init_db():
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
         email TEXT,
+        is_guest INTEGER DEFAULT 0,
+        oauth_provider TEXT,
+        oauth_id TEXT,
+        avatar_url TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_login TIMESTAMP
     )''')
+
+    # 兼容旧数据库：逐列添加新字段
+    for col, col_type, default in [
+        ('is_guest', 'INTEGER', '0'),
+        ('oauth_provider', 'TEXT', None),
+        ('oauth_id', 'TEXT', None),
+        ('avatar_url', 'TEXT', None),
+    ]:
+        try:
+            if default is not None:
+                c.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type} DEFAULT {default}")
+            else:
+                c.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+        except:
+            pass
     
     # 书籍表
     c.execute('''CREATE TABLE IF NOT EXISTS books (
@@ -452,23 +472,26 @@ def register_book(name, user_id):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
-        return render_template('login.html')
-    
+        # 传递 Google OAuth 配置到模板
+        google_client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+        return render_template('login.html', google_enabled=bool(google_client_id), google_client_id=google_client_id)
+
     data = request.json
     username = data.get('username', '').strip()
     password = data.get('password', '')
-    
+
     if not username or not password:
         return jsonify({'status': 'error', 'message': '请输入用户名和密码'})
-    
+
     conn = sqlite3.connect(get_db_path())
     c = conn.cursor()
-    c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
+    c.execute("SELECT id, password, is_guest FROM users WHERE username = ?", (username,))
     user = c.fetchone()
-    
+
     if user and verify_password(user[1], password):
         session['user_id'] = user[0]
         session['username'] = username
+        session['is_guest'] = bool(user[2]) if user[2] else False
         session.permanent = True
         # 自动升级旧版 SHA256 哈希到安全哈希
         if not user[1].startswith(('pbkdf2:', 'scrypt:')):
@@ -478,7 +501,7 @@ def login():
         conn.commit()
         conn.close()
         return jsonify({'status': 'success', 'message': '登录成功'})
-    
+
     conn.close()
     return jsonify({'status': 'error', 'message': '用户名或密码错误'})
 
@@ -528,10 +551,364 @@ def logout():
 @app.route('/api/user_info')
 @login_required
 def user_info():
-    return jsonify({
-        'user_id': session.get('user_id'),
-        'username': session.get('username')
-    })
+    user_id = get_current_user_id()
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("SELECT username, email, is_guest, oauth_provider, avatar_url, created_at FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return jsonify({
+            'user_id': user_id,
+            'username': row[0],
+            'email': row[1] or '',
+            'is_guest': bool(row[2]),
+            'oauth_provider': row[3] or '',
+            'avatar_url': row[4] or '',
+            'created_at': row[5] or ''
+        })
+    return jsonify({'user_id': user_id, 'username': session.get('username')})
+
+# ============================================
+# 👤 游客模式
+# ============================================
+
+@app.route('/guest_login', methods=['POST'])
+def guest_login():
+    """创建游客账户，免注册即可试用"""
+    guest_id = secrets.token_hex(6)
+    guest_username = f"guest_{guest_id}"
+    guest_password = secrets.token_hex(16)
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users (username, password, is_guest) VALUES (?, ?, 1)",
+                  (guest_username, hash_password(guest_password)))
+        user_id = c.lastrowid
+        c.execute("INSERT INTO user_settings (user_id, key, value) VALUES (?, 'vocab_size', '0')", (user_id,))
+        conn.commit()
+        conn.close()
+
+        session['user_id'] = user_id
+        session['username'] = guest_username
+        session['is_guest'] = True
+        session.permanent = True
+
+        return jsonify({'status': 'success', 'message': '游客模式已开启'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'status': 'error', 'message': f'创建游客失败: {str(e)}'})
+
+@app.route('/convert_guest', methods=['POST'])
+@login_required
+def convert_guest():
+    """游客账户转正式账户"""
+    user_id = get_current_user_id()
+    if not session.get('is_guest'):
+        return jsonify({'status': 'error', 'message': '当前不是游客账户'})
+
+    data = request.json
+    username = data.get('username', '').strip()
+    password = data.get('password', '')
+    email = data.get('email', '').strip()
+
+    if not username or not password:
+        return jsonify({'status': 'error', 'message': '请输入用户名和密码'})
+    if len(username) < 2:
+        return jsonify({'status': 'error', 'message': '用户名至少2个字符'})
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    c.execute("SELECT id FROM users WHERE username = ?", (username,))
+    if c.fetchone():
+        conn.close()
+        return jsonify({'status': 'error', 'message': '用户名已存在'})
+
+    try:
+        c.execute("UPDATE users SET username = ?, password = ?, email = ?, is_guest = 0 WHERE id = ?",
+                  (username, hash_password(password), email, user_id))
+        conn.commit()
+        conn.close()
+
+        session['username'] = username
+        session['is_guest'] = False
+
+        return jsonify({'status': 'success', 'message': '账户升级成功，所有学习数据已保留'})
+    except Exception as e:
+        conn.close()
+        return jsonify({'status': 'error', 'message': f'升级失败: {str(e)}'})
+
+# ============================================
+# 🔗 Google OAuth 登录
+# ============================================
+
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+
+@app.route('/auth/google', methods=['POST'])
+def google_auth():
+    """使用 Google ID Token 登录（前端通过 Google Sign-In 获取 token）"""
+    if not GOOGLE_CLIENT_ID:
+        return jsonify({'status': 'error', 'message': 'Google 登录未配置'})
+    if not HAS_REQUESTS:
+        return jsonify({'status': 'error', 'message': '缺少 requests 库'})
+
+    id_token = request.json.get('id_token', '')
+    if not id_token:
+        return jsonify({'status': 'error', 'message': '缺少 id_token'})
+
+    # 验证 Google ID Token
+    try:
+        verify_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={id_token}"
+        resp = requests.get(verify_url, timeout=10)
+        if resp.status_code != 200:
+            return jsonify({'status': 'error', 'message': 'Google 验证失败'})
+        token_info = resp.json()
+
+        # 确认 token 是给我们的应用签发的
+        if token_info.get('aud') != GOOGLE_CLIENT_ID:
+            return jsonify({'status': 'error', 'message': 'Token 不匹配'})
+
+        google_id = token_info.get('sub')
+        email = token_info.get('email', '')
+        name = token_info.get('name', '') or email.split('@')[0]
+        avatar = token_info.get('picture', '')
+
+    except Exception as e:
+        logging.error(f"Google OAuth 验证失败: {e}")
+        return jsonify({'status': 'error', 'message': f'验证出错: {str(e)}'})
+
+    # 查找或创建用户
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    c.execute("SELECT id, username FROM users WHERE oauth_provider = 'google' AND oauth_id = ?", (google_id,))
+    user = c.fetchone()
+
+    if user:
+        # 已有用户，直接登录
+        user_id, username = user
+        c.execute("UPDATE users SET last_login = ?, avatar_url = ? WHERE id = ?",
+                  (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), avatar, user_id))
+    else:
+        # 新用户，自动注册
+        # 确保用户名唯一
+        base_name = re.sub(r'[^a-zA-Z0-9_\u4e00-\u9fff]', '', name) or 'user'
+        username = base_name
+        counter = 1
+        while True:
+            c.execute("SELECT id FROM users WHERE username = ?", (username,))
+            if not c.fetchone():
+                break
+            username = f"{base_name}_{counter}"
+            counter += 1
+
+        random_pw = secrets.token_hex(16)
+        c.execute("""INSERT INTO users (username, password, email, oauth_provider, oauth_id, avatar_url)
+                     VALUES (?, ?, ?, 'google', ?, ?)""",
+                  (username, hash_password(random_pw), email, google_id, avatar))
+        user_id = c.lastrowid
+        c.execute("INSERT INTO user_settings (user_id, key, value) VALUES (?, 'vocab_size', '0')", (user_id,))
+
+    conn.commit()
+    conn.close()
+
+    session['user_id'] = user_id
+    session['username'] = username
+    session['is_guest'] = False
+    session.permanent = True
+
+    return jsonify({'status': 'success', 'message': '登录成功', 'username': username})
+
+# ============================================
+# 📤 数据导出
+# ============================================
+
+@app.route('/api/export_data', methods=['GET'])
+@login_required
+def export_data():
+    """导出用户全部学习数据（JSON 格式）"""
+    user_id = get_current_user_id()
+    export_type = request.args.get('type', 'all')  # all / notebook / vocab / report
+
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    result = {'exported_at': datetime.now().isoformat(), 'user': session.get('username')}
+
+    if export_type in ('all', 'notebook'):
+        c.execute("SELECT text, explanation, type, created_at, next_review, quiz_correct_count FROM notebook WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+        result['notebook'] = [dict(row) for row in c.fetchall()]
+
+    if export_type in ('all', 'vocab'):
+        c.execute("SELECT id, content FROM books WHERE user_id = ? ORDER BY id ASC", (user_id,))
+        books = c.fetchall()
+        ignore_set = get_user_ignore_set(user_id)
+        all_vocab = set()
+        book_vocab_list = []
+        for b in books:
+            words = extract_words(b['content'] or '', user_id, ignore_set)
+            new_words = words - all_vocab
+            all_vocab.update(words)
+            book_vocab_list.append({'book_id': b['id'], 'new_words': sorted(list(new_words)), 'total_words': len(words)})
+        result['vocabulary'] = {'total_unique_words': len(all_vocab), 'all_words': sorted(list(all_vocab)), 'by_book': book_vocab_list}
+
+    if export_type in ('all', 'report'):
+        c.execute("SELECT COUNT(*) FROM notebook WHERE user_id = ?", (user_id,))
+        total_words_learned = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM books WHERE user_id = ?", (user_id,))
+        total_books = c.fetchone()[0]
+        c.execute("SELECT value FROM user_settings WHERE user_id = ? AND key = 'vocab_size'", (user_id,))
+        urow = c.fetchone()
+        vocab_size = int(urow[0]) if urow else 0
+        c.execute("""SELECT DATE(created_at) as date, COUNT(*) as count
+                     FROM notebook WHERE user_id = ? GROUP BY DATE(created_at) ORDER BY date""", (user_id,))
+        daily_stats = [{'date': row['date'], 'count': row['count']} for row in c.fetchall()]
+        result['report'] = {
+            'total_words_learned': total_words_learned,
+            'total_books': total_books,
+            'vocab_size': vocab_size,
+            'daily_activity': daily_stats
+        }
+
+    conn.close()
+
+    json_str = json_module.dumps(result, ensure_ascii=False, indent=2)
+    return Response(
+        json_str,
+        mimetype='application/json',
+        headers={'Content-Disposition': f'attachment; filename=ai_reader_export_{datetime.now().strftime("%Y%m%d")}.json'}
+    )
+
+@app.route('/api/export_csv', methods=['GET'])
+@login_required
+def export_csv():
+    """导出生词本为 CSV 格式"""
+    user_id = get_current_user_id()
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+    c.execute("SELECT text, explanation, type, created_at, quiz_correct_count FROM notebook WHERE user_id = ? ORDER BY created_at DESC", (user_id,))
+    rows = c.fetchall()
+    conn.close()
+
+    import csv
+    import io
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['单词/短语', '释义', '类型', '添加时间', '正确次数'])
+    for r in rows:
+        # 去除 HTML 标签
+        explanation = re.sub(r'<[^>]+>', '', r['explanation'] or '')
+        writer.writerow([r['text'], explanation, r['type'], r['created_at'], r['quiz_correct_count'] or 0])
+
+    # 添加 BOM 头，确保 Excel 正确识别中文编码
+    csv_content = '\ufeff' + output.getvalue()
+    return Response(
+        csv_content,
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename=vocabulary_{datetime.now().strftime("%Y%m%d")}.csv'}
+    )
+
+# ============================================
+# ⚙️ 账户管理
+# ============================================
+
+@app.route('/settings')
+@login_required
+def settings_page():
+    return render_template('settings.html', username=session.get('username'))
+
+@app.route('/api/change_password', methods=['POST'])
+@login_required
+def change_password():
+    user_id = get_current_user_id()
+    data = request.json
+    old_password = data.get('old_password', '')
+    new_password = data.get('new_password', '')
+
+    if not old_password or not new_password:
+        return jsonify({'status': 'error', 'message': '请输入旧密码和新密码'})
+    if len(new_password) < 4:
+        return jsonify({'status': 'error', 'message': '新密码至少4个字符'})
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("SELECT password FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+
+    if not row or not verify_password(row[0], old_password):
+        conn.close()
+        return jsonify({'status': 'error', 'message': '旧密码错误'})
+
+    c.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(new_password), user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'message': '密码修改成功'})
+
+@app.route('/api/update_email', methods=['POST'])
+@login_required
+def update_email():
+    user_id = get_current_user_id()
+    email = request.json.get('email', '').strip()
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("UPDATE users SET email = ? WHERE id = ?", (email, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'message': '邮箱已更新'})
+
+@app.route('/api/delete_account', methods=['POST'])
+@login_required
+def delete_account():
+    """删除账户及全部学习数据（不可恢复）"""
+    user_id = get_current_user_id()
+    data = request.json
+    confirm = data.get('confirm', '')
+
+    if confirm != 'DELETE':
+        return jsonify({'status': 'error', 'message': '请输入 DELETE 确认删除'})
+
+    # 非 OAuth 用户需要验证密码
+    password = data.get('password', '')
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("SELECT password, oauth_provider FROM users WHERE id = ?", (user_id,))
+    row = c.fetchone()
+
+    if row and not row[1] and not session.get('is_guest'):
+        # 普通用户需要验证密码
+        if not password or not verify_password(row[0], password):
+            conn.close()
+            return jsonify({'status': 'error', 'message': '密码验证失败'})
+
+    try:
+        # 删除所有用户数据
+        c.execute("DELETE FROM notebook WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM ignored_words WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM books WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM folders WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+
+        # 删除用户上传文件
+        user_upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], str(user_id))
+        if os.path.exists(user_upload_dir):
+            import shutil
+            shutil.rmtree(user_upload_dir, ignore_errors=True)
+
+        session.clear()
+        return jsonify({'status': 'success', 'message': '账户已删除，所有数据已清除'})
+    except Exception as e:
+        conn.close()
+        logging.error(f"删除账户失败: {e}")
+        return jsonify({'status': 'error', 'message': f'删除失败: {str(e)}'})
 
 # ============================================
 # 📚 主要路由
