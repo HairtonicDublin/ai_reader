@@ -1676,7 +1676,7 @@
             sentenceBtn.onclick = async () => {
                 const selectedText = window.getSelection().toString().trim();
                 sentenceBtn.innerText = "⏳...";
-                outputDiv.innerHTML = "<div style='color:#0052cc;'>🧠 DeepSeek...</div>";
+                outputDiv.innerHTML = "<div style='color:#0052cc;'>🧠 ChatGPT...</div>";
                 try {
                     const res = await fetch('/ask_ai', {
                         method: 'POST',

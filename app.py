@@ -130,11 +130,14 @@ for _try_path in [
         break
 
 # 配置
-DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
-logging.info(f"DEEPSEEK_API_KEY 状态: {'已设置 (' + DEEPSEEK_API_KEY[:8] + '...)' if DEEPSEEK_API_KEY else '未设置'}")
-if not DEEPSEEK_API_KEY:
-    logging.warning("⚠️ DEEPSEEK_API_KEY 未设置，AI 翻译功能将不可用。请设置环境变量 DEEPSEEK_API_KEY")
-DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+logging.info(f"OPENAI_API_KEY 状态: {'已设置 (' + OPENAI_API_KEY[:8] + '...)' if OPENAI_API_KEY else '未设置'}")
+if not OPENAI_API_KEY:
+    logging.warning("⚠️ OPENAI_API_KEY 未设置，AI 翻译功能将不可用。请设置环境变量 OPENAI_API_KEY")
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+# 支持的模型: gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4o, code-davinci-002（Codex）
+AI_MODEL = os.environ.get('AI_MODEL', 'gpt-3.5-turbo')
+logging.info(f"使用模型: {AI_MODEL}")
 
 UPLOAD_FOLDER = os.path.join(get_data_dir(), 'uploads')
 if not os.path.exists(UPLOAD_FOLDER):
@@ -357,28 +360,55 @@ def analyze_vocabulary_task(bid, text, user_id):
     conn.close()
     recalculate_chain(user_id)
 
-def call_deepseek(prompt, max_tokens=200):
-    if not DEEPSEEK_API_KEY:
-        return "请设置 DEEPSEEK_API_KEY 环境变量以使用 AI 功能"
+def call_openai(prompt, max_tokens=200):
+    """调用 OpenAI API（支持 ChatGPT、Codex 等模型）"""
+    if not OPENAI_API_KEY:
+        return "请设置 OPENAI_API_KEY 环境变量以使用 AI 功能"
     if not HAS_REQUESTS:
         return "Error: requests library missing."
     try:
-        resp = requests.post(
-            DEEPSEEK_URL,
-            json={
-                "model": "deepseek-chat",
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # 针对不同模型的不同请求格式
+        if "code-davinci" in AI_MODEL or "codex" in AI_MODEL.lower():
+            # Codex 模型使用 completions 端点（已弃用，这里用 chat completions 兼容）
+            data = {
+                "model": AI_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "max_tokens": max_tokens
-            },
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+                "max_tokens": max_tokens,
+                "temperature": 0.3
+            }
+        else:
+            # ChatGPT 模型
+            data = {
+                "model": AI_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.3
+            }
+        
+        resp = requests.post(
+            OPENAI_API_URL,
+            json=data,
+            headers=headers,
             timeout=15
         )
         if resp.status_code == 200:
-            return resp.json()['choices'][0]['message']['content']
-        return f"API Error: {resp.status_code}"
+            result = resp.json()
+            return result['choices'][0]['message']['content']
+        else:
+            error_detail = resp.json().get('error', {}).get('message', f'Status {resp.status_code}')
+            return f"API Error: {error_detail}"
     except Exception as e:
         return f"Net Error: {e}"
+
+# 保持向后兼容性
+def call_deepseek(prompt, max_tokens=200):
+    """向后兼容：重定向到 call_openai"""
+    return call_openai(prompt, max_tokens)
 
 def clean_block_text(text):
     text = re.sub(r'(\w)-\n\s*(\w)', r'\1\2', text)
@@ -678,12 +708,12 @@ def ask_ai():
 
     res = ""
     if mode == 'word':
-        # 直接用 DeepSeek 查询中英文释义
-        ai_result = call_deepseek(
+        # 直接用 OpenAI ChatGPT 查询中英文释义
+        ai_result = call_openai(
             f"请为英语单词 '{text}' 提供简洁释义，严格按以下格式输出，不要任何多余内容：\n中文：一个简短的中文翻译\n英文：A brief English definition in one sentence.",
             150
         )
-        logging.info(f"DeepSeek 查词结果 [{text}]: {ai_result}")
+        logging.info(f"OpenAI 查词结果 [{text}]: {ai_result}")
 
         cn = ""
         en = ""
@@ -713,7 +743,7 @@ def ask_ai():
 
         res = f"<div class='cn-def' style='font-size:18px;font-weight:bold;color:#2c3e50'>{cn}</div><div class='en-def' style='font-size:14px;color:#555;margin-top:4px'>{en}</div>"
     else:
-        res = call_deepseek(f"请翻译并分析以下内容：{text}", 500)
+        res = call_openai(f"请翻译并分析以下内容：{text}", 500)
         if not res:
             res = "无法获取解释"
         res = str(html_escape(res))
