@@ -100,6 +100,137 @@
             margin: 20px;
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            position: relative;
+        }
+
+        /* 阅读进度条 */
+        #reading-progress-bar {
+            position: sticky;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #e0e0e0;
+            z-index: 100;
+            margin: -40px -40px 20px -40px;
+            border-radius: 12px 12px 0 0;
+            overflow: hidden;
+        }
+        #reading-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        #reading-percent-badge {
+            position: sticky;
+            top: 6px;
+            float: right;
+            background: rgba(102, 126, 234, 0.9);
+            color: white;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            z-index: 101;
+            margin-right: -30px;
+            margin-top: -18px;
+        }
+
+        /* 章节目录面板 */
+        #toc-panel {
+            display: none;
+            position: fixed;
+            top: 40px;
+            left: 0;
+            width: 300px;
+            height: calc(100vh - 40px);
+            background: white;
+            box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+            z-index: 9999;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+        #toc-panel.open { display: block; }
+        #toc-panel .toc-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            background: white;
+            z-index: 1;
+        }
+        #toc-panel .toc-header h3 { margin: 0; font-size: 16px; color: #333; }
+        #toc-panel .toc-close {
+            background: none; border: none; font-size: 20px;
+            cursor: pointer; color: #999; padding: 4px 8px;
+        }
+        #toc-panel .toc-close:hover { color: #333; }
+        #toc-panel .toc-list { padding: 8px 0; }
+        #toc-panel .toc-item {
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #555;
+            border-left: 3px solid transparent;
+            transition: all 0.2s;
+            line-height: 1.5;
+        }
+        #toc-panel .toc-item:hover {
+            background: #f5f5f7;
+            color: #333;
+        }
+        #toc-panel .toc-item.active {
+            background: #eef2ff;
+            border-left-color: #667eea;
+            color: #667eea;
+            font-weight: 600;
+        }
+        #toc-panel .toc-item.level-2 { padding-left: 36px; font-size: 13px; }
+        #toc-panel .toc-item.level-3 { padding-left: 52px; font-size: 12px; }
+        #toc-panel .toc-item .toc-page {
+            float: right; color: #aaa; font-size: 12px;
+        }
+        /* 目录按钮 */
+        #toc-toggle-btn {
+            display: none;
+            position: fixed;
+            top: 50px;
+            left: 10px;
+            z-index: 9998;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.2s;
+        }
+        #toc-toggle-btn:hover { background: #f0f0f0; }
+        /* 继续阅读提示 */
+        #resume-reading-toast {
+            display: none;
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 14px;
+            cursor: pointer;
+            z-index: 10001;
+            box-shadow: 0 4px 20px rgba(102,126,234,0.4);
+            animation: slideUp 0.5s ease;
+        }
+        #resume-reading-toast:hover { transform: translateX(-50%) translateY(-2px); }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
 
         #content,
@@ -999,6 +1130,10 @@
                 width: 100%;
                 max-height: 30vh;
             }
+
+            #toc-panel { width: 260px; }
+            #reading-progress-bar { margin: -20px -20px 15px -20px; }
+            #reading-percent-badge { margin-right: -12px; }
         }
     </style>
 </head>
@@ -1013,8 +1148,26 @@
         <a href="/logout" class="logout-btn">退出登录</a>
     </div>
 
+    <!-- 章节目录面板 -->
+    <div id="toc-panel">
+        <div class="toc-header">
+            <h3>目录</h3>
+            <button class="toc-close" onclick="toggleTOC()">&times;</button>
+        </div>
+        <div class="toc-list" id="toc-list"></div>
+    </div>
+    <button id="toc-toggle-btn" onclick="toggleTOC()">📑</button>
+
+    <!-- 继续阅读提示 -->
+    <div id="resume-reading-toast" onclick="resumeReading()">
+        📖 继续上次阅读
+    </div>
+
     <div class="main-container">
         <input type="hidden" id="current-book-id" value="{{ book_id }}">
+        <input type="hidden" id="saved-read-position" value="{{ read_position }}">
+        <input type="hidden" id="saved-read-percent" value="{{ read_percent }}">
+        <input type="hidden" id="book-chapters" value='{{ chapters | tojson }}'>
 
         <div id="vocab-modal" class="modal-overlay">
             <div class="modal-content">
@@ -1119,6 +1272,10 @@
         <button id="sentence-btn">✨ Explain Sentence</button>
 
         <div id="reader-container">
+            {% if content %}
+            <div id="reading-progress-bar"><div id="reading-progress-fill"></div></div>
+            <div id="reading-percent-badge">0%</div>
+            {% endif %}
             <div id="content">
                 {% if content %}
                 <div
@@ -1211,6 +1368,237 @@
 
             // 检测是否为触摸设备
             const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+            // ========== 阅读进度 & 章节导航系统 ==========
+            const savedPosition = parseInt(document.getElementById('saved-read-position').value) || 0;
+            const savedPercent = parseFloat(document.getElementById('saved-read-percent').value) || 0;
+            let bookChapters = [];
+            try { bookChapters = JSON.parse(document.getElementById('book-chapters').value || '[]'); } catch(e) {}
+            let readingSessionId = null;
+            let progressSaveTimer = null;
+            let currentReadPercent = savedPercent;
+
+            // 初始化目录面板
+            function initTOC() {
+                if (!bookChapters || bookChapters.length === 0) return;
+                const tocList = document.getElementById('toc-list');
+                const btn = document.getElementById('toc-toggle-btn');
+                btn.style.display = 'block';
+
+                let html = '';
+                bookChapters.forEach((ch, idx) => {
+                    const level = ch.level || 1;
+                    const levelClass = level > 2 ? 'level-3' : level > 1 ? 'level-2' : '';
+                    const pageLabel = ch.page ? `<span class="toc-page">p.${ch.page}</span>` : '';
+                    html += `<div class="toc-item ${levelClass}" data-chapter-idx="${idx}" onclick="jumpToChapter(${idx})">
+                        ${ch.title} ${pageLabel}
+                    </div>`;
+                });
+                tocList.innerHTML = html;
+            }
+
+            function toggleTOC() {
+                const panel = document.getElementById('toc-panel');
+                panel.classList.toggle('open');
+            }
+
+            function jumpToChapter(idx) {
+                if (idx < 0 || idx >= bookChapters.length) return;
+                const chapter = bookChapters[idx];
+                const title = chapter.title;
+
+                // 在阅读器内容中搜索章节标题
+                const contentEl = document.getElementById('formatted') || document.getElementById('content');
+                if (!contentEl) return;
+
+                // 搜索匹配的文本节点
+                const textContent = contentEl.innerText;
+                const chapterPos = textContent.indexOf(title);
+                if (chapterPos >= 0) {
+                    // 找到包含该文本的 word span
+                    const words = contentEl.querySelectorAll('.word');
+                    let charCount = 0;
+                    for (const word of words) {
+                        // 粗略定位：找到前后文本位置接近的 word
+                        const wordRect = word.getBoundingClientRect();
+                        const containerRect = document.getElementById('reader-container').getBoundingClientRect();
+                        const textBefore = getTextBefore(contentEl, word);
+                        if (textBefore.length >= chapterPos) {
+                            word.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            // 高亮当前章节
+                            updateActiveTocItem(idx);
+                            saveProgressNow();
+                            break;
+                        }
+                    }
+                    // 回退方案：按比例滚动
+                    if (chapterPos > 0) {
+                        const ratio = chapterPos / textContent.length;
+                        const container = document.getElementById('reader-container');
+                        container.scrollTo({
+                            top: ratio * (container.scrollHeight - container.clientHeight),
+                            behavior: 'smooth'
+                        });
+                        updateActiveTocItem(idx);
+                        saveProgressNow();
+                    }
+                }
+
+                // 关闭目录面板
+                document.getElementById('toc-panel').classList.remove('open');
+            }
+
+            function getTextBefore(container, targetNode) {
+                const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null, false);
+                let text = '';
+                let node;
+                while (node = walker.nextNode()) {
+                    if (node.parentElement === targetNode || node === targetNode) break;
+                    text += node.textContent;
+                }
+                return text;
+            }
+
+            function updateActiveTocItem(idx) {
+                document.querySelectorAll('#toc-list .toc-item').forEach((item, i) => {
+                    item.classList.toggle('active', i === idx);
+                });
+            }
+
+            // 阅读进度跟踪
+            function updateReadingProgress() {
+                const container = document.getElementById('reader-container');
+                if (!container || !bookId || bookId == "0") return;
+
+                const scrollTop = container.scrollTop;
+                const scrollHeight = container.scrollHeight - container.clientHeight;
+                const percent = scrollHeight > 0 ? Math.round((scrollTop / scrollHeight) * 100) : 0;
+                currentReadPercent = percent;
+
+                // 更新进度条
+                const fill = document.getElementById('reading-progress-fill');
+                const badge = document.getElementById('reading-percent-badge');
+                if (fill) fill.style.width = percent + '%';
+                if (badge) badge.textContent = percent + '%';
+
+                // 更新目录中的当前章节
+                if (bookChapters.length > 0) {
+                    const contentEl = document.getElementById('formatted');
+                    if (contentEl) {
+                        const textLen = contentEl.innerText.length;
+                        const currentPos = Math.round((scrollTop / (scrollHeight || 1)) * textLen);
+                        let activeIdx = 0;
+                        // 找到最近的章节
+                        const textContent = contentEl.innerText;
+                        for (let i = bookChapters.length - 1; i >= 0; i--) {
+                            const pos = textContent.indexOf(bookChapters[i].title);
+                            if (pos >= 0 && pos <= currentPos) {
+                                activeIdx = i;
+                                break;
+                            }
+                        }
+                        updateActiveTocItem(activeIdx);
+                    }
+                }
+
+                // 防抖保存进度
+                clearTimeout(progressSaveTimer);
+                progressSaveTimer = setTimeout(() => saveProgressNow(), 2000);
+            }
+
+            function saveProgressNow() {
+                if (!bookId || bookId == "0") return;
+                const container = document.getElementById('reader-container');
+                if (!container) return;
+                const scrollTop = container.scrollTop;
+
+                // 获取当前章节名
+                let chapterName = '';
+                const activeItem = document.querySelector('#toc-list .toc-item.active');
+                if (activeItem) chapterName = activeItem.textContent.trim();
+
+                fetch('/api/save_reading_progress', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        book_id: bookId,
+                        position: Math.round(scrollTop),
+                        percent: currentReadPercent,
+                        chapter: chapterName
+                    })
+                }).catch(() => {});
+            }
+
+            // 继续阅读
+            function resumeReading() {
+                const container = document.getElementById('reader-container');
+                if (!container || !savedPosition) return;
+                container.scrollTo({ top: savedPosition, behavior: 'smooth' });
+                document.getElementById('resume-reading-toast').style.display = 'none';
+            }
+
+            // 初始化阅读器
+            function initReader() {
+                if (!bookId || bookId == "0") return;
+
+                // 初始化目录
+                initTOC();
+
+                // 初始化进度条
+                if (savedPercent > 0) {
+                    const fill = document.getElementById('reading-progress-fill');
+                    const badge = document.getElementById('reading-percent-badge');
+                    if (fill) fill.style.width = savedPercent + '%';
+                    if (badge) badge.textContent = Math.round(savedPercent) + '%';
+                }
+
+                // 监听滚动事件
+                const container = document.getElementById('reader-container');
+                if (container) {
+                    container.addEventListener('scroll', updateReadingProgress);
+                }
+
+                // 如果有保存的阅读位置，显示"继续阅读"提示
+                if (savedPosition > 100) {
+                    setTimeout(() => {
+                        const toast = document.getElementById('resume-reading-toast');
+                        toast.style.display = 'block';
+                        // 5秒后自动隐藏
+                        setTimeout(() => { toast.style.display = 'none'; }, 5000);
+                    }, 500);
+                }
+
+                // 开始阅读会话
+                fetch('/api/start_reading_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ book_id: bookId, position: savedPosition })
+                }).then(r => r.json()).then(data => {
+                    if (data.session_id) readingSessionId = data.session_id;
+                }).catch(() => {});
+
+                // 页面关闭时结束会话并保存进度
+                window.addEventListener('beforeunload', () => {
+                    saveProgressNow();
+                    if (readingSessionId) {
+                        const container = document.getElementById('reader-container');
+                        navigator.sendBeacon('/api/end_reading_session',
+                            new Blob([JSON.stringify({
+                                session_id: readingSessionId,
+                                position: container ? Math.round(container.scrollTop) : 0
+                            })], { type: 'application/json' })
+                        );
+                    }
+                });
+
+                // 页面可见性变化时保存进度
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) saveProgressNow();
+                });
+            }
+
+            // 页面加载时初始化阅读器
+            initReader();
 
             // 页面加载完成后刷新统计（等待后台分析完成）
             if (bookId && bookId != "0") {
