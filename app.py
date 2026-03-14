@@ -291,12 +291,23 @@ def init_db():
         UNIQUE(user_id, key)
     )''')
     
+    # 密码重置令牌表
+    c.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token TEXT UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        used INTEGER DEFAULT 0,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )''')
+
     # 创建索引
     try:
         c.execute("CREATE INDEX IF NOT EXISTS idx_books_user ON books(user_id);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_notebook_user ON notebook(user_id);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_notebook_book ON notebook(book_id);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_notebook_created ON notebook(created_at);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_reset_token ON password_reset_tokens(token);")
     except:
         pass
     
@@ -472,9 +483,14 @@ def register_book(name, user_id):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
-        # 传递 Google OAuth 配置到模板
+        # 传递 OAuth 配置到模板
         google_client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
-        return render_template('login.html', google_enabled=bool(google_client_id), google_client_id=google_client_id)
+        apple_client_id = os.environ.get('APPLE_CLIENT_ID', '')
+        return render_template('login.html',
+                               google_enabled=bool(google_client_id),
+                               google_client_id=google_client_id,
+                               apple_enabled=bool(apple_client_id),
+                               apple_client_id=apple_client_id)
 
     data = request.json
     username = data.get('username', '').strip()
@@ -721,6 +737,203 @@ def google_auth():
     session.permanent = True
 
     return jsonify({'status': 'success', 'message': '登录成功', 'username': username})
+
+# ============================================
+# 🍎 Apple Sign-In
+# ============================================
+
+APPLE_CLIENT_ID = os.environ.get('APPLE_CLIENT_ID', '')  # 即 Services ID
+APPLE_TEAM_ID = os.environ.get('APPLE_TEAM_ID', '')
+APPLE_KEY_ID = os.environ.get('APPLE_KEY_ID', '')
+# Apple 私钥文件路径或内容（.p8 文件）
+APPLE_PRIVATE_KEY = os.environ.get('APPLE_PRIVATE_KEY', '')
+
+@app.route('/auth/apple', methods=['POST'])
+def apple_auth():
+    """Apple Sign-In：前端通过 Apple JS SDK 获取 authorization code + id_token"""
+    if not APPLE_CLIENT_ID:
+        return jsonify({'status': 'error', 'message': 'Apple 登录未配置'})
+
+    data = request.json
+    id_token = data.get('id_token', '')
+    auth_code = data.get('code', '')
+    user_info = data.get('user', {})  # Apple 首次登录时会传用户信息
+
+    if not id_token:
+        return jsonify({'status': 'error', 'message': '缺少 id_token'})
+
+    # 解码 Apple ID Token（JWT）
+    try:
+        import base64
+        # Apple ID Token 是标准 JWT，解码 payload 获取用户信息
+        parts = id_token.split('.')
+        if len(parts) != 3:
+            return jsonify({'status': 'error', 'message': 'Token 格式错误'})
+
+        # 解码 payload（第二部分）
+        payload = parts[1]
+        # 补齐 base64 填充
+        payload += '=' * (4 - len(payload) % 4)
+        decoded = json_module.loads(base64.urlsafe_b64decode(payload))
+
+        # 验证 audience
+        if decoded.get('aud') != APPLE_CLIENT_ID:
+            return jsonify({'status': 'error', 'message': 'Token audience 不匹配'})
+
+        # 验证 issuer
+        if decoded.get('iss') != 'https://appleid.apple.com':
+            return jsonify({'status': 'error', 'message': 'Token issuer 不合法'})
+
+        # 验证过期时间
+        if decoded.get('exp', 0) < datetime.now().timestamp():
+            return jsonify({'status': 'error', 'message': 'Token 已过期'})
+
+        apple_id = decoded.get('sub', '')
+        email = decoded.get('email', '')
+        # Apple 首次登录才返回姓名
+        name = ''
+        if user_info:
+            first = user_info.get('name', {}).get('firstName', '')
+            last = user_info.get('name', {}).get('lastName', '')
+            name = f"{first} {last}".strip()
+
+    except Exception as e:
+        logging.error(f"Apple Sign-In 验证失败: {e}")
+        return jsonify({'status': 'error', 'message': f'验证出错: {str(e)}'})
+
+    if not apple_id:
+        return jsonify({'status': 'error', 'message': '无法获取 Apple 用户ID'})
+
+    # 查找或创建用户
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    c.execute("SELECT id, username FROM users WHERE oauth_provider = 'apple' AND oauth_id = ?", (apple_id,))
+    user = c.fetchone()
+
+    if user:
+        user_id, username = user
+        c.execute("UPDATE users SET last_login = ? WHERE id = ?",
+                  (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), user_id))
+    else:
+        # 新用户
+        base_name = re.sub(r'[^a-zA-Z0-9_\u4e00-\u9fff]', '', name) if name else ''
+        if not base_name:
+            base_name = email.split('@')[0] if email else 'apple_user'
+        username = base_name
+        counter = 1
+        while True:
+            c.execute("SELECT id FROM users WHERE username = ?", (username,))
+            if not c.fetchone():
+                break
+            username = f"{base_name}_{counter}"
+            counter += 1
+
+        random_pw = secrets.token_hex(16)
+        c.execute("""INSERT INTO users (username, password, email, oauth_provider, oauth_id)
+                     VALUES (?, ?, ?, 'apple', ?)""",
+                  (username, hash_password(random_pw), email, apple_id))
+        user_id = c.lastrowid
+        c.execute("INSERT INTO user_settings (user_id, key, value) VALUES (?, 'vocab_size', '0')", (user_id,))
+
+    conn.commit()
+    conn.close()
+
+    session['user_id'] = user_id
+    session['username'] = username
+    session['is_guest'] = False
+    session.permanent = True
+
+    return jsonify({'status': 'success', 'message': '登录成功', 'username': username})
+
+# ============================================
+# 🔑 密码找回 / 重置
+# ============================================
+
+@app.route('/forgot_password', methods=['GET'])
+def forgot_password_page():
+    return render_template('forgot_password.html')
+
+@app.route('/api/forgot_password', methods=['POST'])
+def forgot_password():
+    """通过用户名+邮箱验证身份，生成重置令牌"""
+    data = request.json
+    username = data.get('username', '').strip()
+    email = data.get('email', '').strip()
+
+    if not username or not email:
+        return jsonify({'status': 'error', 'message': '请输入用户名和注册邮箱'})
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("SELECT id, email FROM users WHERE username = ?", (username,))
+    user = c.fetchone()
+
+    if not user or not user[1]:
+        conn.close()
+        # 模糊回复，防止用户名枚举
+        return jsonify({'status': 'success', 'message': '如果信息匹配，重置链接已生成'})
+
+    if user[1].lower() != email.lower():
+        conn.close()
+        return jsonify({'status': 'success', 'message': '如果信息匹配，重置链接已生成'})
+
+    # 生成重置令牌（有效期 30 分钟）
+    token = secrets.token_urlsafe(32)
+    c.execute("INSERT INTO password_reset_tokens (user_id, token) VALUES (?, ?)", (user[0], token))
+    conn.commit()
+    conn.close()
+
+    # 返回令牌给前端（实际生产环境应通过邮件发送）
+    logging.info(f"密码重置令牌已生成: 用户={username}, token={token}")
+    return jsonify({
+        'status': 'success',
+        'message': '验证成功，请设置新密码',
+        'reset_token': token
+    })
+
+@app.route('/reset_password', methods=['GET'])
+def reset_password_page():
+    token = request.args.get('token', '')
+    return render_template('forgot_password.html', reset_token=token)
+
+@app.route('/api/reset_password', methods=['POST'])
+def reset_password():
+    """使用重置令牌设置新密码"""
+    data = request.json
+    token = data.get('token', '').strip()
+    new_password = data.get('new_password', '')
+
+    if not token or not new_password:
+        return jsonify({'status': 'error', 'message': '缺少令牌或新密码'})
+    if len(new_password) < 4:
+        return jsonify({'status': 'error', 'message': '新密码至少4个字符'})
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    # 查找有效令牌（30 分钟内未使用）
+    c.execute("""SELECT user_id FROM password_reset_tokens
+                 WHERE token = ? AND used = 0
+                 AND created_at >= datetime('now', '-30 minutes')""", (token,))
+    row = c.fetchone()
+
+    if not row:
+        conn.close()
+        return jsonify({'status': 'error', 'message': '重置链接无效或已过期，请重新申请'})
+
+    user_id = row[0]
+
+    # 更新密码
+    c.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(new_password), user_id))
+    # 标记令牌已使用
+    c.execute("UPDATE password_reset_tokens SET used = 1 WHERE token = ?", (token,))
+    # 清理该用户所有旧令牌
+    c.execute("DELETE FROM password_reset_tokens WHERE user_id = ? AND (used = 1 OR created_at < datetime('now', '-1 hour'))", (user_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'status': 'success', 'message': '密码重置成功，请使用新密码登录'})
 
 # ============================================
 # 📤 数据导出

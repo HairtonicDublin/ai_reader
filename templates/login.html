@@ -237,6 +237,55 @@
             height: 18px;
         }
 
+        .apple-btn {
+            width: 100%;
+            padding: 14px;
+            background: #000;
+            color: white;
+            border: 2px solid #000;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .apple-btn:hover {
+            background: #333;
+            border-color: #333;
+        }
+
+        .apple-btn svg {
+            width: 18px;
+            height: 18px;
+        }
+
+        .oauth-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .forgot-link {
+            display: block;
+            text-align: right;
+            font-size: 13px;
+            color: #667eea;
+            text-decoration: none;
+            margin-top: -10px;
+            margin-bottom: 16px;
+        }
+
+        .forgot-link:hover {
+            text-decoration: underline;
+            color: #764ba2;
+        }
+
         .features {
             margin-top: 30px;
             padding-top: 20px;
@@ -313,6 +362,7 @@
                         <label>密码</label>
                         <input type="password" id="login-password" placeholder="请输入密码" required>
                     </div>
+                    <a href="/forgot_password" class="forgot-link">忘记密码？</a>
                     <button type="submit" class="submit-btn" id="login-btn">登录</button>
                 </form>
             </div>
@@ -347,12 +397,22 @@
                 先试用，不注册
             </button>
 
-            <!-- Google 登录 -->
-            {% if google_enabled %}
-            <button class="google-btn" onclick="handleGoogleLogin()" id="google-btn">
-                <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-                使用 Google 账号登录
-            </button>
+            <!-- 第三方登录 -->
+            {% if google_enabled or apple_enabled %}
+            <div class="oauth-buttons">
+                {% if google_enabled %}
+                <button class="google-btn" onclick="handleGoogleLogin()" id="google-btn">
+                    <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    使用 Google 账号登录
+                </button>
+                {% endif %}
+                {% if apple_enabled %}
+                <button class="apple-btn" onclick="handleAppleLogin()" id="apple-btn">
+                    <svg viewBox="0 0 24 24" fill="white"><path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+                    使用 Apple 账号登录
+                </button>
+                {% endif %}
+            </div>
             {% endif %}
 
             <div class="features">
@@ -506,16 +566,49 @@
             }
         }
 
-        // Google 登录（需要配置 GOOGLE_CLIENT_ID 环境变量）
+        // Google 登录
         async function handleGoogleLogin() {
             showMessage('正在连接 Google...', 'success');
-            // Google Sign-In 由 Google Identity Services 库处理
-            // 这里需要在 head 中引入 Google 的 JS SDK
             if (typeof google === 'undefined' || !google.accounts) {
                 showMessage('Google 登录服务加载中，请稍后重试', 'error');
                 return;
             }
             google.accounts.id.prompt();
+        }
+
+        // Apple 登录
+        async function handleAppleLogin() {
+            showMessage('正在连接 Apple...', 'success');
+            if (typeof AppleID === 'undefined') {
+                showMessage('Apple 登录服务加载中，请稍后重试', 'error');
+                return;
+            }
+            try {
+                const data = await AppleID.auth.signIn();
+                // data.authorization 包含 code 和 id_token
+                const res = await fetch('/auth/apple', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id_token: data.authorization.id_token,
+                        code: data.authorization.code,
+                        user: data.user || {}
+                    })
+                });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    showMessage('登录成功，正在跳转...', 'success');
+                    setTimeout(() => { window.location.href = '/'; }, 500);
+                } else {
+                    showMessage(result.message, 'error');
+                }
+            } catch (err) {
+                if (err.error === 'popup_closed_by_user') {
+                    hideMessage();
+                } else {
+                    showMessage('Apple 登录失败: ' + (err.error || err.message || '未知错误'), 'error');
+                }
+            }
         }
 
         // 回车键提交
@@ -533,31 +626,58 @@
     <!-- Google Identity Services -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
-        window.onload = function() {
-            if (typeof google !== 'undefined' && google.accounts) {
-                google.accounts.id.initialize({
-                    client_id: '{{ google_client_id }}',
-                    callback: async function(response) {
-                        try {
-                            const res = await fetch('/auth/google', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ id_token: response.credential })
-                            });
-                            const data = await res.json();
-                            if (data.status === 'success') {
-                                showMessage('登录成功，正在跳转...', 'success');
-                                setTimeout(() => { window.location.href = '/'; }, 500);
-                            } else {
-                                showMessage(data.message, 'error');
+        document.addEventListener('DOMContentLoaded', function() {
+            function initGoogle() {
+                if (typeof google !== 'undefined' && google.accounts) {
+                    google.accounts.id.initialize({
+                        client_id: '{{ google_client_id }}',
+                        callback: async function(response) {
+                            try {
+                                const res = await fetch('/auth/google', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ id_token: response.credential })
+                                });
+                                const data = await res.json();
+                                if (data.status === 'success') {
+                                    showMessage('登录成功，正在跳转...', 'success');
+                                    setTimeout(() => { window.location.href = '/'; }, 500);
+                                } else {
+                                    showMessage(data.message, 'error');
+                                }
+                            } catch (err) {
+                                showMessage('Google 登录失败', 'error');
                             }
-                        } catch (err) {
-                            showMessage('Google 登录失败', 'error');
                         }
-                    }
-                });
+                    });
+                } else {
+                    setTimeout(initGoogle, 200);
+                }
             }
-        };
+            initGoogle();
+        });
+    </script>
+    {% endif %}
+
+    {% if apple_enabled %}
+    <!-- Apple Sign-In JS -->
+    <script type="text/javascript" src="https://appleid.cdn-apple.com/appleauth/static/jsapi/appleid/1/en_US/appleid.auth.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            function initApple() {
+                if (typeof AppleID !== 'undefined') {
+                    AppleID.auth.init({
+                        clientId: '{{ apple_client_id }}',
+                        scope: 'name email',
+                        redirectURI: window.location.origin + '/auth/apple/callback',
+                        usePopup: true
+                    });
+                } else {
+                    setTimeout(initApple, 200);
+                }
+            }
+            initApple();
+        });
     </script>
     {% endif %}
 </body>
