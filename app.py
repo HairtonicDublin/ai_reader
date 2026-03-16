@@ -134,7 +134,7 @@ for _try_path in [
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 OPENAI_API_KEY = GEMINI_API_KEY
 OPENAI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
-AI_MODEL = os.environ.get('AI_MODEL', 'gemini-2.5-flash')
+AI_MODEL = os.environ.get('AI_MODEL', 'gemini-3.1-flash-lite')
 
 logging.info(f"Gemini API Key 状态: {'已设置 (' + GEMINI_API_KEY[:8] + '...)' if GEMINI_API_KEY else '未设置'}")
 logging.info(f"使用模型: {AI_MODEL}")
