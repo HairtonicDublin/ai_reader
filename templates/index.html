@@ -136,7 +136,44 @@
             margin-top: -18px;
         }
 
-        /* 章节目录面板 */
+        /* TTS 发音按钮 */
+        .tts-btn {
+            display: inline-block;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            padding: 2px 4px;
+            vertical-align: middle;
+            opacity: 0.7;
+            transition: opacity 0.2s, transform 0.2s;
+        }
+        .tts-btn:hover { opacity: 1; transform: scale(1.2); }
+        .tts-btn.playing { opacity: 1; animation: tts-pulse 0.6s infinite alternate; }
+        @keyframes tts-pulse { from { transform: scale(1); } to { transform: scale(1.3); } }
+        .tts-accent-switch {
+            display: inline-flex;
+            gap: 4px;
+            margin-left: 6px;
+            font-size: 11px;
+            vertical-align: middle;
+        }
+        .tts-accent-switch button {
+            padding: 1px 6px;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-radius: 10px;
+            background: rgba(255,255,255,0.15);
+            cursor: pointer;
+            font-size: 11px;
+            color: rgba(255,255,255,0.8);
+            transition: all 0.2s;
+        }
+        .tts-accent-switch button.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
         /* AI 对话聊天面板 */
         #ai-chat-panel {
             display: flex;
@@ -1189,8 +1226,24 @@
             color: white;
             padding: 8px 12px;
             border-radius: 6px;
-            pointer-events: none;
-            max-width: 300px;
+            pointer-events: auto;
+            max-width: 320px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        #word-tooltip .tooltip-word {
+            font-weight: bold;
+            font-size: 15px;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #word-tooltip .tooltip-meaning {
+            font-size: 13px;
+            opacity: 0.95;
         }
 
         /* iPad 上传按钮 */
@@ -1525,6 +1578,51 @@
             let timerInterval = null;
             let timeLeft = 1800;
 
+            // ========== TTS 单词发音 ==========
+            let ttsAccent = 'US'; // 默认美式
+            let ttsCurrentUtterance = null;
+
+            function speakWord(word, accent) {
+                if (!word) return;
+                accent = accent || ttsAccent;
+                // 停止当前播放
+                if (window.speechSynthesis.speaking) {
+                    window.speechSynthesis.cancel();
+                }
+                const utterance = new SpeechSynthesisUtterance(word);
+                utterance.rate = 0.85;
+                utterance.pitch = 1;
+                // 选择对应口音的声音
+                const voices = window.speechSynthesis.getVoices();
+                const langTag = accent === 'UK' ? 'en-GB' : 'en-US';
+                const preferred = voices.find(v => v.lang === langTag) ||
+                                  voices.find(v => v.lang.startsWith(langTag.split('-')[0]));
+                if (preferred) utterance.voice = preferred;
+                utterance.lang = langTag;
+
+                // 播放动画
+                const btns = document.querySelectorAll('.tts-btn');
+                btns.forEach(b => b.classList.add('playing'));
+                utterance.onend = () => btns.forEach(b => b.classList.remove('playing'));
+                utterance.onerror = () => btns.forEach(b => b.classList.remove('playing'));
+
+                ttsCurrentUtterance = utterance;
+                window.speechSynthesis.speak(utterance);
+            }
+
+            function switchAccent(newAccent) {
+                ttsAccent = newAccent;
+                document.querySelectorAll('.tts-accent-switch button').forEach(btn => {
+                    btn.classList.toggle('active', btn.dataset.accent === newAccent);
+                });
+            }
+
+            // 预加载声音列表（部分浏览器需要）
+            if (window.speechSynthesis) {
+                window.speechSynthesis.getVoices();
+                window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+            }
+
             // 检测是否为触摸设备
             const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
@@ -1822,10 +1920,13 @@
 
                 wordEl.classList.add('active-word');
                 const rect = wordEl.getBoundingClientRect();
-                tooltip.style.left = Math.min(rect.left, window.innerWidth - 200) + 'px';
+                tooltip.style.left = Math.min(rect.left, window.innerWidth - 320) + 'px';
                 tooltip.style.top = (rect.top - 40) + 'px';
                 tooltip.style.display = 'block';
-                tooltip.innerHTML = "🚀 查询中...";
+                tooltip.innerHTML = `<div class="tooltip-word">${word} <button class="tts-btn" onclick="speakWord('${word.replace(/'/g, "\\'")}')">🔊</button></div><div class="tooltip-meaning">🚀 查询中...</div>`;
+
+                // 自动发音
+                speakWord(word);
 
                 try {
                     const res = await fetch('/ask_ai', {
@@ -1841,8 +1942,10 @@
                     const data = await res.json();
                     const result = data.result || data.error || '暂无释义';
 
-                    tooltip.innerHTML = result;
-                    outputDiv.innerHTML = `<h3>${word}</h3><div>${result}</div>`;
+                    const accentUS = ttsAccent === 'US' ? 'active' : '';
+                    const accentUK = ttsAccent === 'UK' ? 'active' : '';
+                    tooltip.innerHTML = `<div class="tooltip-word">${word} <button class="tts-btn" onclick="speakWord('${word.replace(/'/g, "\\'")}')">🔊</button><span class="tts-accent-switch"><button class="${accentUS}" data-accent="US" onclick="switchAccent('US');speakWord('${word.replace(/'/g, "\\'")}','US')">美</button><button class="${accentUK}" data-accent="UK" onclick="switchAccent('UK');speakWord('${word.replace(/'/g, "\\'")}','UK')">英</button></span></div><div class="tooltip-meaning">${result}</div>`;
+                    outputDiv.innerHTML = `<h3>${word} <button class="tts-btn" onclick="speakWord('${word.replace(/'/g, "\\'")}')">🔊</button></h3><div>${result}</div>`;
                     // 同步到聊天面板
                     if (typeof appendChatMessage === 'function') {
                         appendChatMessage('user', `查词: ${word}`);
@@ -1852,8 +1955,8 @@
                     updateSidebarStats();
                 } catch (err) {
                     console.error('Word lookup error:', err);
-                    tooltip.innerHTML = "❌ 查询失败";
-                    outputDiv.innerHTML = `<h3>${word}</h3><div>查询失败，请重试</div>`;
+                    tooltip.innerHTML = `<div class="tooltip-word">${word} <button class="tts-btn" onclick="speakWord('${word.replace(/'/g, "\\'")}')">🔊</button></div><div class="tooltip-meaning">❌ 查询失败</div>`;
+                    outputDiv.innerHTML = `<h3>${word} <button class="tts-btn" onclick="speakWord('${word.replace(/'/g, "\\'")}')">🔊</button></h3><div>查询失败，请重试</div>`;
                     wordEl.classList.remove('active-word');
                 }
             }
