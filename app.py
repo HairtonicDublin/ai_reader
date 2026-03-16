@@ -453,7 +453,7 @@ def analyze_vocabulary_task(bid, text, user_id):
 def call_openai(prompt, max_tokens=200):
     """调用 OpenAI API（支持 ChatGPT、Codex 等模型）"""
     if not OPENAI_API_KEY:
-        return "请设置 OPENAI_API_KEY 环境变量以使用 AI 功能"
+        return "请在 .env 中设置 GEMINI_API_KEY 以使用 AI 功能"
     if not HAS_REQUESTS:
         return "Error: requests library missing."
     try:
@@ -485,7 +485,7 @@ def call_openai(prompt, max_tokens=200):
 def call_openai_chat(messages, max_tokens=800):
     """多轮对话版本，接受完整 messages 列表"""
     if not OPENAI_API_KEY:
-        return "请设置 OPENAI_API_KEY 环境变量以使用 AI 功能"
+        return "请在 .env 中设置 GEMINI_API_KEY 以使用 AI 功能"
     if not HAS_REQUESTS:
         return "Error: requests library missing."
     try:
