@@ -137,6 +137,147 @@
         }
 
         /* 章节目录面板 */
+        /* AI 对话聊天面板 */
+        #ai-chat-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            background: #f9fafb;
+            border-radius: 10px;
+            border: 1px solid #eee;
+            overflow: hidden;
+        }
+        #ai-chat-panel .chat-header {
+            padding: 10px 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+        #ai-chat-panel .chat-header .chat-context-hint {
+            font-size: 11px;
+            opacity: 0.8;
+            font-weight: normal;
+            max-width: 160px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        #ai-chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            min-height: 0;
+        }
+        .chat-msg {
+            max-width: 88%;
+            padding: 9px 13px;
+            border-radius: 14px;
+            font-size: 13px;
+            line-height: 1.6;
+            word-break: break-word;
+        }
+        .chat-msg.user {
+            align-self: flex-end;
+            background: #667eea;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .chat-msg.assistant {
+            align-self: flex-start;
+            background: white;
+            color: #333;
+            border: 1px solid #e8e8e8;
+            border-bottom-left-radius: 4px;
+        }
+        .chat-msg.assistant p { margin: 4px 0; }
+        .chat-msg.system {
+            align-self: center;
+            background: #fff3cd;
+            color: #856404;
+            font-size: 12px;
+            padding: 6px 12px;
+            border-radius: 20px;
+        }
+        .chat-msg.typing {
+            align-self: flex-start;
+            background: white;
+            border: 1px solid #e8e8e8;
+            color: #aaa;
+            font-style: italic;
+        }
+        #ai-chat-input-area {
+            display: flex;
+            padding: 8px;
+            border-top: 1px solid #eee;
+            background: white;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        #ai-chat-input {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            padding: 8px 14px;
+            font-size: 13px;
+            outline: none;
+            resize: none;
+            max-height: 80px;
+            min-height: 36px;
+            line-height: 1.4;
+            font-family: inherit;
+        }
+        #ai-chat-input:focus { border-color: #667eea; }
+        #ai-chat-send-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: none;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s;
+            align-self: flex-end;
+        }
+        #ai-chat-send-btn:hover { transform: scale(1.1); }
+        #ai-chat-send-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .chat-quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 6px 12px 2px;
+            flex-shrink: 0;
+        }
+        .chat-quick-btn {
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: 14px;
+            border: 1px solid #ddd;
+            background: white;
+            color: #555;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .chat-quick-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
         #toc-panel {
             display: none;
             position: fixed;
@@ -1349,10 +1490,28 @@
                     </button>
                 </div>
             </div>
-            <div class="section-title">AI Assistant</div>
-            <div id="output">
-                <p>👋 等待查询...</p>
+            <div id="ai-chat-panel">
+                <div class="chat-header">
+                    <span>AI 阅读助手</span>
+                    <span class="chat-context-hint" id="chat-context-hint" title="">无上下文</span>
+                </div>
+                <div id="ai-chat-messages">
+                    <div class="chat-msg system">选中段落或开始阅读后，AI 将感知你的阅读内容</div>
+                </div>
+                <div class="chat-quick-actions" id="chat-quick-actions">
+                    <button class="chat-quick-btn" onclick="quickAsk('这段话的主要意思是什么？')">段落大意</button>
+                    <button class="chat-quick-btn" onclick="quickAsk('请分析这段话的语法结构')">语法分析</button>
+                    <button class="chat-quick-btn" onclick="quickAsk('这里有哪些重要词汇需要注意？')">重点词汇</button>
+                    <button class="chat-quick-btn" onclick="quickAsk('作者想表达什么观点？')">作者意图</button>
+                </div>
+                <div id="ai-chat-input-area">
+                    <textarea id="ai-chat-input" rows="1" placeholder="问问 AI 关于这段内容..."
+                              onkeydown="chatKeyDown(event)"></textarea>
+                    <button id="ai-chat-send-btn" onclick="sendChatMessage()">➤</button>
+                </div>
             </div>
+            <!-- 单词查询结果仍保留（用于 tooltip 同步） -->
+            <div id="output" style="display:none;"></div>
         </div>
 
         <script>
@@ -1684,6 +1843,12 @@
 
                     tooltip.innerHTML = result;
                     outputDiv.innerHTML = `<h3>${word}</h3><div>${result}</div>`;
+                    // 同步到聊天面板
+                    if (typeof appendChatMessage === 'function') {
+                        appendChatMessage('user', `查词: ${word}`);
+                        const plainResult = result.replace(/<[^>]+>/g, '').trim();
+                        appendChatMessage('assistant', plainResult);
+                    }
                     updateSidebarStats();
                 } catch (err) {
                     console.error('Word lookup error:', err);
@@ -2065,6 +2230,11 @@
                 const selectedText = window.getSelection().toString().trim();
                 sentenceBtn.innerText = "⏳...";
                 outputDiv.innerHTML = "<div style='color:#0052cc;'>🧠 ChatGPT...</div>";
+                // 同步到聊天面板
+                if (typeof appendChatMessage === 'function') {
+                    appendChatMessage('user', `翻译: "${selectedText.substring(0, 80)}..."`);
+                    showTypingIndicator();
+                }
                 try {
                     const res = await fetch('/ask_ai', {
                         method: 'POST',
@@ -2073,13 +2243,193 @@
                     });
                     const data = await res.json();
                     outputDiv.innerHTML = `<div style="background:#e8f5e9; padding:10px; border-radius:8px;">"${selectedText.substring(0, 50)}..."</div>${data.result}`;
+                    if (typeof removeTypingIndicator === 'function') {
+                        removeTypingIndicator();
+                        const plainResult = (data.result || '').replace(/<[^>]+>/g, '').trim();
+                        appendChatMessage('assistant', plainResult);
+                    }
                 } catch (err) {
                     outputDiv.innerHTML = "Error";
+                    if (typeof removeTypingIndicator === 'function') {
+                        removeTypingIndicator();
+                        appendChatMessage('system', '翻译失败');
+                    }
                 }
                 sentenceBtn.innerText = "✨ Explain";
                 sentenceBtn.style.display = 'none';
                 window.getSelection().removeAllRanges();
             };
+
+            // ========== AI 对话式阅读助手 ==========
+            let chatHistory = [];
+            let chatContext = '';
+            let chatIsSending = false;
+
+            // 获取当前可见区域的阅读文本作为上下文
+            function getVisibleReadingContext() {
+                const container = document.getElementById('reader-container');
+                const formatted = document.getElementById('formatted');
+                if (!container || !formatted) return '';
+
+                const containerRect = container.getBoundingClientRect();
+                const words = formatted.querySelectorAll('.word');
+                let visibleText = [];
+                let started = false;
+
+                for (const word of words) {
+                    const rect = word.getBoundingClientRect();
+                    // 在可视区域内的文字
+                    if (rect.top >= containerRect.top - 50 && rect.bottom <= containerRect.bottom + 50) {
+                        started = true;
+                        visibleText.push(word.textContent);
+                    } else if (started && rect.top > containerRect.bottom + 50) {
+                        break; // 已经超过可视区域
+                    }
+                }
+
+                // 拼接为可读文本（用空格连接单词，保留标点间距）
+                return visibleText.join(' ').substring(0, 2000);
+            }
+
+            // 更新上下文（用户选中文本优先，否则用可见区域）
+            function updateChatContext() {
+                const selection = window.getSelection().toString().trim();
+                if (selection.length > 10) {
+                    chatContext = selection.substring(0, 2000);
+                    document.getElementById('chat-context-hint').textContent = '已选中: ' + selection.substring(0, 30) + '...';
+                    document.getElementById('chat-context-hint').title = selection.substring(0, 200);
+                } else {
+                    const visible = getVisibleReadingContext();
+                    if (visible.length > 20) {
+                        chatContext = visible;
+                        document.getElementById('chat-context-hint').textContent = '当前页面内容';
+                        document.getElementById('chat-context-hint').title = visible.substring(0, 200) + '...';
+                    } else {
+                        chatContext = '';
+                        document.getElementById('chat-context-hint').textContent = '无上下文';
+                        document.getElementById('chat-context-hint').title = '';
+                    }
+                }
+            }
+
+            // 监听滚动和选择事件来更新上下文
+            if (bookId && bookId != "0") {
+                const readerContainer = document.getElementById('reader-container');
+                if (readerContainer) {
+                    let contextTimer = null;
+                    readerContainer.addEventListener('scroll', () => {
+                        clearTimeout(contextTimer);
+                        contextTimer = setTimeout(updateChatContext, 500);
+                    });
+                }
+                document.addEventListener('mouseup', () => setTimeout(updateChatContext, 200));
+                // 初始加载上下文
+                setTimeout(updateChatContext, 1500);
+            }
+
+            function appendChatMessage(role, content) {
+                const container = document.getElementById('ai-chat-messages');
+                const div = document.createElement('div');
+                div.className = 'chat-msg ' + role;
+                if (role === 'assistant') {
+                    // 简单 markdown 渲染：加粗、换行
+                    let html = content
+                        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/\n/g, '<br>');
+                    div.innerHTML = html;
+                } else {
+                    div.textContent = content;
+                }
+                container.appendChild(div);
+                container.scrollTop = container.scrollHeight;
+                return div;
+            }
+
+            function showTypingIndicator() {
+                const container = document.getElementById('ai-chat-messages');
+                const div = document.createElement('div');
+                div.className = 'chat-msg typing';
+                div.id = 'chat-typing';
+                div.textContent = 'AI 思考中...';
+                container.appendChild(div);
+                container.scrollTop = container.scrollHeight;
+            }
+
+            function removeTypingIndicator() {
+                const el = document.getElementById('chat-typing');
+                if (el) el.remove();
+            }
+
+            async function sendChatMessage() {
+                if (chatIsSending) return;
+                const input = document.getElementById('ai-chat-input');
+                const message = input.value.trim();
+                if (!message) return;
+
+                input.value = '';
+                input.style.height = 'auto';
+                chatIsSending = true;
+                document.getElementById('ai-chat-send-btn').disabled = true;
+
+                // 更新上下文
+                updateChatContext();
+
+                // 显示用户消息
+                appendChatMessage('user', message);
+                chatHistory.push({ role: 'user', content: message });
+                showTypingIndicator();
+
+                try {
+                    const res = await fetch('/api/ai_chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: message,
+                            context: chatContext,
+                            book_title: '{{ book_title | e }}',
+                            history: chatHistory.slice(-10)
+                        })
+                    });
+                    const data = await res.json();
+                    removeTypingIndicator();
+
+                    if (data.status === 'success') {
+                        appendChatMessage('assistant', data.reply);
+                        chatHistory.push({ role: 'assistant', content: data.reply });
+                    } else {
+                        appendChatMessage('system', data.message || 'AI 服务暂不可用');
+                    }
+                } catch (err) {
+                    removeTypingIndicator();
+                    appendChatMessage('system', '网络错误，请重试');
+                }
+
+                chatIsSending = false;
+                document.getElementById('ai-chat-send-btn').disabled = false;
+                input.focus();
+            }
+
+            function quickAsk(question) {
+                document.getElementById('ai-chat-input').value = question;
+                sendChatMessage();
+            }
+
+            function chatKeyDown(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChatMessage();
+                }
+            }
+
+            // 自动调整输入框高度
+            document.getElementById('ai-chat-input').addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = Math.min(this.scrollHeight, 80) + 'px';
+            });
+
+            // 单词查词结果也同步到聊天面板
+            const origOutputDiv = document.getElementById('output');
         </script>
     </div><!-- end main-container -->
 </body>

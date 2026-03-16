@@ -451,8 +451,27 @@ def analyze_vocabulary_task(bid, text, user_id):
     recalculate_chain(user_id)
 
 def _get_api_key():
-    """动态获取 API Key（优先全局变量，回退环境变量）"""
-    return OPENAI_API_KEY or os.environ.get('GEMINI_API_KEY', '')
+    """动态获取 API Key（优先全局变量，回退环境变量，最后直接读 .env 文件）"""
+    key = OPENAI_API_KEY or os.environ.get('GEMINI_API_KEY', '')
+    if not key:
+        # 最后兜底：直接从 .env 文件读取
+        for p in [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
+            os.path.join(os.getcwd(), '.env'),
+        ]:
+            if os.path.exists(p):
+                try:
+                    with open(p) as f:
+                        for line in f:
+                            line = line.strip()
+                            if line.startswith('GEMINI_API_KEY='):
+                                key = line.split('=', 1)[1].strip()
+                                os.environ['GEMINI_API_KEY'] = key
+                                logging.info(f"从 .env 文件重新加载 GEMINI_API_KEY: {key[:8]}...")
+                                return key
+                except Exception:
+                    pass
+    return key
 
 def call_openai(prompt, max_tokens=1000):
     """调用 Gemini API（兼容 OpenAI Chat Completions 格式）"""
@@ -2461,7 +2480,7 @@ def health_check():
 # ============================================
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5001))
     print(f"🚀 Starting server on port {port}")
     print(f"📁 Data directory: {get_data_dir()}")
     app.run(host='0.0.0.0', port=port, debug=False)
