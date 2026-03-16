@@ -134,7 +134,7 @@ for _try_path in [
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 OPENAI_API_KEY = GEMINI_API_KEY
 OPENAI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
-AI_MODEL = os.environ.get('AI_MODEL', 'gemini-2.0-flash')
+AI_MODEL = os.environ.get('AI_MODEL', 'gemini-2.5-flash')
 
 logging.info(f"Gemini API Key 状态: {'已设置 (' + GEMINI_API_KEY[:8] + '...)' if GEMINI_API_KEY else '未设置'}")
 logging.info(f"使用模型: {AI_MODEL}")
@@ -454,7 +454,7 @@ def _get_api_key():
     """动态获取 API Key（优先全局变量，回退环境变量）"""
     return OPENAI_API_KEY or os.environ.get('GEMINI_API_KEY', '')
 
-def call_openai(prompt, max_tokens=200):
+def call_openai(prompt, max_tokens=1000):
     """调用 Gemini API（兼容 OpenAI Chat Completions 格式）"""
     api_key = _get_api_key()
     if not api_key:
@@ -480,14 +480,25 @@ def call_openai(prompt, max_tokens=200):
         )
         if resp.status_code == 200:
             result = resp.json()
-            return result['choices'][0]['message']['content']
+            content = result['choices'][0]['message'].get('content', '')
+            if not content:
+                return "AI 返回为空，请重试"
+            return content
         else:
-            error_detail = resp.json().get('error', {}).get('message', f'Status {resp.status_code}')
+            try:
+                err_json = resp.json()
+                if isinstance(err_json, list):
+                    err_json = err_json[0]
+                error_detail = err_json.get('error', {}).get('message', f'Status {resp.status_code}')
+            except Exception:
+                error_detail = f'Status {resp.status_code}'
+            if resp.status_code == 429:
+                return "API 额度已用完，请检查 Gemini API 配额或稍后重试"
             return f"API Error: {error_detail}"
     except Exception as e:
         return f"Net Error: {e}"
 
-def call_openai_chat(messages, max_tokens=800):
+def call_openai_chat(messages, max_tokens=2000):
     """多轮对话版本，接受完整 messages 列表"""
     api_key = _get_api_key()
     if not api_key:
@@ -513,9 +524,20 @@ def call_openai_chat(messages, max_tokens=800):
         )
         if resp.status_code == 200:
             result = resp.json()
-            return result['choices'][0]['message']['content']
+            content = result['choices'][0]['message'].get('content', '')
+            if not content:
+                return "AI 返回为空，请重试"
+            return content
         else:
-            error_detail = resp.json().get('error', {}).get('message', f'Status {resp.status_code}')
+            try:
+                err_json = resp.json()
+                if isinstance(err_json, list):
+                    err_json = err_json[0]
+                error_detail = err_json.get('error', {}).get('message', f'Status {resp.status_code}')
+            except Exception:
+                error_detail = f'Status {resp.status_code}'
+            if resp.status_code == 429:
+                return "API 额度已用完，请检查 Gemini API 配额或稍后重试"
             return f"API Error: {error_detail}"
     except Exception as e:
         return f"Net Error: {e}"
@@ -2109,8 +2131,7 @@ def ask_ai():
     if mode == 'word':
         # 直接用 OpenAI ChatGPT 查询中英文释义
         ai_result = call_openai(
-            f"请为英语单词 '{text}' 提供简洁释义，严格按以下格式输出，不要任何多余内容：\n中文：一个简短的中文翻译\n英文：A brief English definition in one sentence.",
-            150
+            f"请为英语单词 '{text}' 提供简洁释义，严格按以下格式输出，不要任何多余内容：\n中文：一个简短的中文翻译\n英文：A brief English definition in one sentence."
         )
         logging.info(f"OpenAI 查词结果 [{text}]: {ai_result}")
 
