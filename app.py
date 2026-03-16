@@ -130,15 +130,16 @@ for _try_path in [
                     _env_loaded[_key] = _val
         break
 
-# 配置
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-logging.info(f"OPENAI_API_KEY 状态: {'已设置 (' + OPENAI_API_KEY[:8] + '...)' if OPENAI_API_KEY else '未设置'}")
-if not OPENAI_API_KEY:
-    logging.warning("⚠️ OPENAI_API_KEY 未设置，AI 翻译功能将不可用。请设置环境变量 OPENAI_API_KEY")
-OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
-# 支持的模型: gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4o, code-davinci-002（Codex）
-AI_MODEL = os.environ.get('AI_MODEL', 'gpt-3.5-turbo')
+# AI 配置：Gemini API
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+OPENAI_API_KEY = GEMINI_API_KEY
+OPENAI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+AI_MODEL = os.environ.get('AI_MODEL', 'gemini-2.0-flash')
+
+logging.info(f"Gemini API Key 状态: {'已设置 (' + GEMINI_API_KEY[:8] + '...)' if GEMINI_API_KEY else '未设置'}")
 logging.info(f"使用模型: {AI_MODEL}")
+if not GEMINI_API_KEY:
+    logging.warning("⚠️ GEMINI_API_KEY 未设置，AI 功能将不可用。请在 .env 中设置 GEMINI_API_KEY")
 
 UPLOAD_FOLDER = os.path.join(get_data_dir(), 'uploads')
 if not os.path.exists(UPLOAD_FOLDER):
@@ -243,6 +244,10 @@ def init_db():
         chapters TEXT,
         file_format TEXT,
         page_count INTEGER DEFAULT 0,
+        last_read_at TIMESTAMP,
+        read_position INTEGER DEFAULT 0,
+        read_percent REAL DEFAULT 0,
+        current_chapter TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
         UNIQUE(user_id, title)
@@ -255,6 +260,10 @@ def init_db():
         ('chapters', 'TEXT', None),
         ('file_format', 'TEXT', None),
         ('page_count', 'INTEGER', '0'),
+        ('last_read_at', 'TIMESTAMP', None),
+        ('read_position', 'INTEGER', '0'),
+        ('read_percent', 'REAL', '0'),
+        ('current_chapter', 'TEXT', None),
     ]:
         try:
             if default is not None:
@@ -326,6 +335,20 @@ def init_db():
         UNIQUE(user_id, key)
     )''')
     
+    # 阅读会话记录表
+    c.execute('''CREATE TABLE IF NOT EXISTS reading_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        book_id INTEGER NOT NULL,
+        start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        end_time TIMESTAMP,
+        duration_seconds INTEGER DEFAULT 0,
+        start_position INTEGER DEFAULT 0,
+        end_position INTEGER DEFAULT 0,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(book_id) REFERENCES books(id)
+    )''')
+
     # 密码重置令牌表
     c.execute('''CREATE TABLE IF NOT EXISTS password_reset_tokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -343,6 +366,7 @@ def init_db():
         c.execute("CREATE INDEX IF NOT EXISTS idx_notebook_book ON notebook(book_id);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_notebook_created ON notebook(created_at);")
         c.execute("CREATE INDEX IF NOT EXISTS idx_reset_token ON password_reset_tokens(token);")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_reading_sessions_user ON reading_sessions(user_id, book_id);")
     except:
         pass
     
@@ -437,25 +461,12 @@ def call_openai(prompt, max_tokens=200):
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "Content-Type": "application/json"
         }
-        
-        # 针对不同模型的不同请求格式
-        if "code-davinci" in AI_MODEL or "codex" in AI_MODEL.lower():
-            # Codex 模型使用 completions 端点（已弃用，这里用 chat completions 兼容）
-            data = {
-                "model": AI_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0.3
-            }
-        else:
-            # ChatGPT 模型
-            data = {
-                "model": AI_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-                "temperature": 0.3
-            }
-        
+        data = {
+            "model": AI_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.3
+        }
         resp = requests.post(
             OPENAI_API_URL,
             json=data,
@@ -471,10 +482,38 @@ def call_openai(prompt, max_tokens=200):
     except Exception as e:
         return f"Net Error: {e}"
 
-# 保持向后兼容性
-def call_deepseek(prompt, max_tokens=200):
-    """向后兼容：重定向到 call_openai"""
-    return call_openai(prompt, max_tokens)
+def call_openai_chat(messages, max_tokens=800):
+    """多轮对话版本，接受完整 messages 列表"""
+    if not OPENAI_API_KEY:
+        return "请设置 OPENAI_API_KEY 环境变量以使用 AI 功能"
+    if not HAS_REQUESTS:
+        return "Error: requests library missing."
+    try:
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": AI_MODEL,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0.5
+        }
+        resp = requests.post(
+            OPENAI_API_URL,
+            json=data,
+            headers=headers,
+            timeout=30
+        )
+        if resp.status_code == 200:
+            result = resp.json()
+            return result['choices'][0]['message']['content']
+        else:
+            error_detail = resp.json().get('error', {}).get('message', f'Status {resp.status_code}')
+            return f"API Error: {error_detail}"
+    except Exception as e:
+        return f"Net Error: {e}"
+
 
 def clean_block_text(text):
     text = re.sub(r'(\w)-\n\s*(\w)', r'\1\2', text)
@@ -1483,6 +1522,156 @@ def get_book_chapters(book_id):
     })
 
 # ============================================
+# 📖 阅读进度
+# ============================================
+
+@app.route('/api/save_reading_progress', methods=['POST'])
+@login_required
+def save_reading_progress():
+    """保存阅读进度（前端定期调用）"""
+    user_id = session['user_id']
+    data = request.json
+    book_id = data.get('book_id')
+    position = data.get('position', 0)  # 滚动位置（像素或 word index）
+    percent = data.get('percent', 0)    # 阅读百分比
+    chapter = data.get('chapter', '')   # 当前章节标题
+
+    if not book_id:
+        return jsonify({'status': 'error', 'message': '缺少 book_id'}), 400
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("""UPDATE books SET read_position = ?, read_percent = ?,
+                 current_chapter = ?, last_read_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND user_id = ?""",
+              (position, percent, chapter, book_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success'})
+
+@app.route('/api/get_reading_progress/<int:book_id>')
+@login_required
+def get_reading_progress(book_id):
+    """获取某本书的阅读进度"""
+    user_id = session['user_id']
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("""SELECT read_position, read_percent, current_chapter, last_read_at,
+                 chapters, page_count, file_format
+                 FROM books WHERE id = ? AND user_id = ?""",
+              (book_id, user_id))
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        return jsonify({'status': 'error', 'message': '书籍不存在'}), 404
+
+    chapters = []
+    if row[4]:
+        try:
+            chapters = json_module.loads(row[4])
+        except Exception:
+            pass
+
+    return jsonify({
+        'status': 'success',
+        'progress': {
+            'position': row[0] or 0,
+            'percent': row[1] or 0,
+            'current_chapter': row[2] or '',
+            'last_read_at': row[3] or '',
+        },
+        'chapters': chapters,
+        'page_count': row[5] or 0,
+        'format': row[6] or ''
+    })
+
+@app.route('/api/start_reading_session', methods=['POST'])
+@login_required
+def start_reading_session():
+    """开始一个阅读会话"""
+    user_id = session['user_id']
+    data = request.json
+    book_id = data.get('book_id')
+    position = data.get('position', 0)
+
+    if not book_id:
+        return jsonify({'status': 'error', 'message': '缺少 book_id'}), 400
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("""INSERT INTO reading_sessions (user_id, book_id, start_position)
+                 VALUES (?, ?, ?)""", (user_id, book_id, position))
+    session_id = c.lastrowid
+    # 同时更新 last_read_at
+    c.execute("UPDATE books SET last_read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+              (book_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success', 'session_id': session_id})
+
+@app.route('/api/end_reading_session', methods=['POST'])
+@login_required
+def end_reading_session():
+    """结束一个阅读会话"""
+    user_id = session['user_id']
+    data = request.json
+    session_id = data.get('session_id')
+    position = data.get('position', 0)
+
+    if not session_id:
+        return jsonify({'status': 'error', 'message': '缺少 session_id'}), 400
+
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+    c.execute("""UPDATE reading_sessions
+                 SET end_time = CURRENT_TIMESTAMP,
+                     end_position = ?,
+                     duration_seconds = CAST((julianday(CURRENT_TIMESTAMP) - julianday(start_time)) * 86400 AS INTEGER)
+                 WHERE id = ? AND user_id = ?""",
+              (position, session_id, user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({'status': 'success'})
+
+@app.route('/api/reading_stats')
+@login_required
+def reading_stats():
+    """获取用户阅读统计（总时长、今日时长、最近阅读书籍）"""
+    user_id = session['user_id']
+    conn = sqlite3.connect(get_db_path())
+    c = conn.cursor()
+
+    # 总阅读时长
+    c.execute("SELECT COALESCE(SUM(duration_seconds), 0) FROM reading_sessions WHERE user_id = ?", (user_id,))
+    total_seconds = c.fetchone()[0]
+
+    # 今日阅读时长
+    c.execute("""SELECT COALESCE(SUM(duration_seconds), 0) FROM reading_sessions
+                 WHERE user_id = ? AND date(start_time) = date('now')""", (user_id,))
+    today_seconds = c.fetchone()[0]
+
+    # 最近阅读的书（按 last_read_at 排序）
+    c.execute("""SELECT id, title, read_percent, current_chapter, last_read_at, file_format
+                 FROM books WHERE user_id = ? AND last_read_at IS NOT NULL
+                 ORDER BY last_read_at DESC LIMIT 10""", (user_id,))
+    recent_books = []
+    for row in c.fetchall():
+        recent_books.append({
+            'id': row[0], 'title': row[1],
+            'percent': row[2] or 0, 'chapter': row[3] or '',
+            'last_read': row[4] or '', 'format': row[5] or ''
+        })
+
+    conn.close()
+    return jsonify({
+        'status': 'success',
+        'total_minutes': round(total_seconds / 60),
+        'today_minutes': round(today_seconds / 60),
+        'recent_books': recent_books
+    })
+
+# ============================================
 # 📤 数据导出
 # ============================================
 
@@ -1648,6 +1837,7 @@ def delete_account():
 
     try:
         # 删除所有用户数据
+        c.execute("DELETE FROM reading_sessions WHERE user_id = ?", (user_id,))
         c.execute("DELETE FROM notebook WHERE user_id = ?", (user_id,))
         c.execute("DELETE FROM ignored_words WHERE user_id = ?", (user_id,))
         c.execute("DELETE FROM user_settings WHERE user_id = ?", (user_id,))
@@ -1722,24 +1912,44 @@ def index():
         if row:
             title, content = row
     
+    chapters = []
+    read_position = 0
+    read_percent = 0
+
     if bid:
         conn = sqlite3.connect(get_db_path())
         c = conn.cursor()
-        c.execute("SELECT new_vocab, cumulative_vocab, word_count FROM books WHERE id=? AND user_id=?", (bid, user_id))
+        c.execute("""SELECT new_vocab, cumulative_vocab, word_count, chapters,
+                     read_position, read_percent FROM books WHERE id=? AND user_id=?""",
+                  (bid, user_id))
         row = c.fetchone()
         c.execute("SELECT value FROM user_settings WHERE user_id=? AND key='vocab_size'", (user_id,))
         urow = c.fetchone()
+        # 更新 last_read_at
+        c.execute("UPDATE books SET last_read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?",
+                  (bid, user_id))
+        conn.commit()
         conn.close()
         if row:
-            stats['new'], stats['cumulative'], stats['word_count'] = row
+            stats['new'], stats['cumulative'], stats['word_count'] = row[0], row[1], row[2]
+            if row[3]:
+                try:
+                    chapters = json_module.loads(row[3])
+                except Exception:
+                    pass
+            read_position = row[4] or 0
+            read_percent = row[5] or 0
         if urow:
             stats['user_vocab'] = int(urow[0])
-    
+
     return render_template('index.html',
                            content=content,
                            book_id=bid,
                            book_title=title,
                            stats=stats,
+                           chapters=chapters,
+                           read_position=read_position,
+                           read_percent=read_percent,
                            username=session.get('username'))
 
 # 🟢 智能判断答案
@@ -1824,6 +2034,57 @@ def due_cards():
         
     conn.close()
     return jsonify({'cards': items, 'count': len(items), 'total_exists': total_count})
+
+# ============================================
+# 💬 AI 对话式阅读助手
+# ============================================
+
+@app.route('/api/ai_chat', methods=['POST'])
+@login_required
+def ai_chat():
+    """上下文感知的 AI 阅读助手对话"""
+    user_id = get_current_user_id()
+    data = request.json
+    user_message = data.get('message', '').strip()
+    context_text = data.get('context', '')  # 当前阅读的段落/页面文本
+    book_title = data.get('book_title', '')
+    history = data.get('history', [])  # 前端维护的对话历史
+
+    if not user_message:
+        return jsonify({'status': 'error', 'message': '请输入问题'})
+
+    # 构建 system prompt
+    system_prompt = "你是一个英语阅读助手，正在帮助用户阅读和理解英语文章。请用中文回答用户的问题。"
+    if book_title:
+        system_prompt += f"\n用户正在阅读的书籍：《{book_title}》"
+    if context_text:
+        # 限制上下文长度，避免 token 超限
+        context_trimmed = context_text[:2000]
+        system_prompt += f"\n\n以下是用户当前正在阅读的段落内容：\n---\n{context_trimmed}\n---\n请基于以上内容回答用户的问题。如果问题与上文无关，也可以正常回答。回答要简洁清晰。"
+
+    # 构建 messages
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # 加入对话历史（最近 10 轮，避免超长）
+    for h in history[-10:]:
+        role = h.get('role', 'user')
+        content = h.get('content', '')
+        if role in ('user', 'assistant') and content:
+            messages.append({"role": role, "content": content})
+
+    # 加入当前用户消息
+    messages.append({"role": "user", "content": user_message})
+
+    # 调用 AI
+    reply = call_openai_chat(messages, max_tokens=800)
+
+    if not reply or reply.startswith(('API Error', 'Net Error', '请设置')):
+        return jsonify({'status': 'error', 'message': reply or 'AI 服务暂不可用'})
+
+    return jsonify({
+        'status': 'success',
+        'reply': reply
+    })
 
 @app.route('/ask_ai', methods=['POST'])
 @login_required
