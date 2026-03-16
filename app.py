@@ -450,15 +450,20 @@ def analyze_vocabulary_task(bid, text, user_id):
     conn.close()
     recalculate_chain(user_id)
 
+def _get_api_key():
+    """动态获取 API Key（优先全局变量，回退环境变量）"""
+    return OPENAI_API_KEY or os.environ.get('GEMINI_API_KEY', '')
+
 def call_openai(prompt, max_tokens=200):
-    """调用 OpenAI API（支持 ChatGPT、Codex 等模型）"""
-    if not OPENAI_API_KEY:
+    """调用 Gemini API（兼容 OpenAI Chat Completions 格式）"""
+    api_key = _get_api_key()
+    if not api_key:
         return "请在 .env 中设置 GEMINI_API_KEY 以使用 AI 功能"
     if not HAS_REQUESTS:
         return "Error: requests library missing."
     try:
         headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         data = {
@@ -484,13 +489,14 @@ def call_openai(prompt, max_tokens=200):
 
 def call_openai_chat(messages, max_tokens=800):
     """多轮对话版本，接受完整 messages 列表"""
-    if not OPENAI_API_KEY:
+    api_key = _get_api_key()
+    if not api_key:
         return "请在 .env 中设置 GEMINI_API_KEY 以使用 AI 功能"
     if not HAS_REQUESTS:
         return "Error: requests library missing."
     try:
         headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         data = {
